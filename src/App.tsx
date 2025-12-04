@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 
 import TitleBar from "./components/TitleBar";
-import Sidebar from "./components/Sidebar";
 import ConnectionPanel from "./components/ConnectionPanel";
 import ServerList from "./components/ServerList";
 import SettingsPanel from "./components/SettingsPanel";
@@ -23,7 +22,7 @@ type Tab = "connect" | "servers" | "settings" | "account";
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("connect");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { status, isAuthenticated } = useVPNStore();
+  const { status } = useVPNStore();
 
   // If not authenticated, show login
   // For now, we'll auto-authenticate for demo

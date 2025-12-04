@@ -1,9 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield,
-  ShieldOff,
   Power,
-  MapPin,
   Wifi,
   Server,
   Activity,

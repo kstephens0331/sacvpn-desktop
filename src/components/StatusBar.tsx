@@ -1,4 +1,4 @@
-import { Shield, Clock, ArrowUp, ArrowDown } from "lucide-react";
+import { Clock, ArrowUp, ArrowDown } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
 
 function formatBytes(bytes: number): string {

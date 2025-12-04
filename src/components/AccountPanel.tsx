@@ -1,8 +1,6 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
 import {
   User,
-  Mail,
   Crown,
   Calendar,
   ExternalLink,
@@ -13,7 +11,6 @@ import {
   Gift,
   Copy,
   Check,
-  ChevronRight,
 } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
 

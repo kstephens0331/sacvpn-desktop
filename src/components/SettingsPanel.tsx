@@ -5,16 +5,11 @@ import {
   Zap,
   Wifi,
   Globe,
-  Server,
-  Bell,
-  Moon,
   Monitor,
   Lock,
   ToggleLeft,
   ToggleRight,
   ChevronRight,
-  Info,
-  HardDrive,
   Layers,
 } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";

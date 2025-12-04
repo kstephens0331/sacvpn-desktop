@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Minus, Square, X, Copy } from "lucide-react";
 
 // Tauri imports will work when running in Tauri context
