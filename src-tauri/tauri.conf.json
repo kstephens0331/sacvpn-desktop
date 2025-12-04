@@ -1,0 +1,76 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SACVPN",
+  "version": "1.0.0",
+  "identifier": "com.sacvpn.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SACVPN",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": false,
+        "center": true,
+        "focus": true
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.sacvpn.com https://*.supabase.co"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "copyright": "Copyright 2024 Stephen's Code",
+    "category": "Network",
+    "shortDescription": "Premium VPN Client",
+    "longDescription": "SACVPN Desktop Client - Secure, fast, and private VPN powered by WireGuard protocol.",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": null,
+      "frameworks": [],
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": null
+    }
+  },
+  "plugins": {
+    "autostart": {
+      "macOSLaunchAgent": true
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://api.sacvpn.com/updates/{{target}}/{{arch}}/{{current_version}}"]
+    }
+  }
+}
