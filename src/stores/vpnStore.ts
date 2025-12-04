@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import * as api from "../services/api";
 
 export interface Server {
   id: string;
@@ -12,6 +13,9 @@ export interface Server {
   latency: number;
   isFavorite: boolean;
   isRecommended: boolean;
+  isPremium: boolean;
+  isGaming: boolean;
+  isStreaming: boolean;
 }
 
 export type ConnectionStatus =
@@ -21,11 +25,11 @@ export type ConnectionStatus =
   | "disconnecting";
 
 export interface ConnectionStats {
-  uploadSpeed: number; // bytes per second
-  downloadSpeed: number; // bytes per second
-  totalUploaded: number; // total bytes
-  totalDownloaded: number; // total bytes
-  connectedSince: number | null; // timestamp
+  uploadSpeed: number;
+  downloadSpeed: number;
+  totalUploaded: number;
+  totalDownloaded: number;
+  connectedSince: number | null;
 }
 
 interface VPNState {
@@ -33,22 +37,24 @@ interface VPNState {
   status: ConnectionStatus;
   currentServer: Server | null;
   connectionStats: ConnectionStats;
+  wgConfig: string | null;
 
   // Servers
   servers: Server[];
   selectedServer: Server | null;
   favoriteServerIds: string[];
+  isLoadingServers: boolean;
+  serversError: string | null;
+
+  // Device
+  deviceId: string | null;
+  clientIp: string | null;
 
   // Settings
   autoConnect: boolean;
   killSwitch: boolean;
   splitTunneling: boolean;
   customDns: string;
-
-  // User
-  isAuthenticated: boolean;
-  userEmail: string | null;
-  subscriptionPlan: string | null;
 
   // Actions
   setStatus: (status: ConnectionStatus) => void;
@@ -61,133 +67,83 @@ interface VPNState {
   setKillSwitch: (value: boolean) => void;
   setSplitTunneling: (value: boolean) => void;
   setCustomDns: (value: string) => void;
-  setAuth: (email: string, plan: string) => void;
-  logout: () => void;
+
+  // API Actions
+  fetchServers: () => Promise<void>;
+  registerDevice: (serverId?: string) => Promise<string | null>;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  switchServer: (newServerId: string) => Promise<void>;
 }
 
-// Mock servers for development
+// Country code mapping
+const countryCodeMap: Record<string, string> = {
+  "United States": "US",
+  "United Kingdom": "GB",
+  Germany: "DE",
+  France: "FR",
+  Japan: "JP",
+  Australia: "AU",
+  Canada: "CA",
+  Netherlands: "NL",
+  Singapore: "SG",
+  Sweden: "SE",
+  Switzerland: "CH",
+  Brazil: "BR",
+  India: "IN",
+  "South Korea": "KR",
+};
+
+// Convert API server to local format
+function convertServer(apiServer: api.Server, favoriteIds: string[]): Server {
+  return {
+    id: apiServer.id,
+    name: apiServer.name,
+    country: apiServer.country,
+    countryCode: countryCodeMap[apiServer.country] || "XX",
+    city: apiServer.city,
+    ip: "",
+    load: apiServer.load,
+    latency: apiServer.latency || 0,
+    isFavorite: favoriteIds.includes(apiServer.id),
+    isRecommended: apiServer.load < 50,
+    isPremium: apiServer.is_premium,
+    isGaming: apiServer.is_gaming_optimized,
+    isStreaming: apiServer.is_streaming_optimized,
+  };
+}
+
+// Mock servers for offline/development
 const mockServers: Server[] = [
   {
     id: "us-east-1",
-    name: "New York",
+    name: "Virginia",
     country: "United States",
     countryCode: "US",
-    city: "New York",
-    ip: "198.51.100.1",
+    city: "Virginia",
+    ip: "",
     load: 45,
     latency: 23,
     isFavorite: false,
     isRecommended: true,
+    isPremium: false,
+    isGaming: false,
+    isStreaming: false,
   },
   {
-    id: "us-west-1",
-    name: "Los Angeles",
+    id: "us-central-1",
+    name: "Dallas",
     country: "United States",
     countryCode: "US",
-    city: "Los Angeles",
-    ip: "198.51.100.2",
+    city: "Dallas",
+    ip: "",
     load: 32,
-    latency: 58,
-    isFavorite: false,
-    isRecommended: false,
-  },
-  {
-    id: "uk-london-1",
-    name: "London",
-    country: "United Kingdom",
-    countryCode: "GB",
-    city: "London",
-    ip: "198.51.100.3",
-    load: 67,
-    latency: 89,
-    isFavorite: false,
-    isRecommended: false,
-  },
-  {
-    id: "de-frankfurt-1",
-    name: "Frankfurt",
-    country: "Germany",
-    countryCode: "DE",
-    city: "Frankfurt",
-    ip: "198.51.100.4",
-    load: 28,
-    latency: 112,
-    isFavorite: false,
-    isRecommended: true,
-  },
-  {
-    id: "jp-tokyo-1",
-    name: "Tokyo",
-    country: "Japan",
-    countryCode: "JP",
-    city: "Tokyo",
-    ip: "198.51.100.5",
-    load: 55,
-    latency: 145,
-    isFavorite: false,
-    isRecommended: false,
-  },
-  {
-    id: "au-sydney-1",
-    name: "Sydney",
-    country: "Australia",
-    countryCode: "AU",
-    city: "Sydney",
-    ip: "198.51.100.6",
-    load: 41,
-    latency: 198,
-    isFavorite: false,
-    isRecommended: false,
-  },
-  {
-    id: "ca-toronto-1",
-    name: "Toronto",
-    country: "Canada",
-    countryCode: "CA",
-    city: "Toronto",
-    ip: "198.51.100.7",
-    load: 38,
     latency: 35,
     isFavorite: false,
     isRecommended: true,
-  },
-  {
-    id: "nl-amsterdam-1",
-    name: "Amsterdam",
-    country: "Netherlands",
-    countryCode: "NL",
-    city: "Amsterdam",
-    ip: "198.51.100.8",
-    load: 52,
-    latency: 95,
-    isFavorite: false,
-    isRecommended: false,
-  },
-  {
-    id: "sg-singapore-1",
-    name: "Singapore",
-    country: "Singapore",
-    countryCode: "SG",
-    city: "Singapore",
-    ip: "198.51.100.9",
-    load: 61,
-    latency: 172,
-    isFavorite: false,
-    isRecommended: false,
-  },
-  {
-    id: "fr-paris-1",
-    name: "Paris",
-    country: "France",
-    countryCode: "FR",
-    city: "Paris",
-    ip: "198.51.100.10",
-    load: 44,
-    latency: 102,
-    isFavorite: false,
-    isRecommended: false,
+    isPremium: false,
+    isGaming: true,
+    isStreaming: false,
   },
 ];
 
@@ -204,18 +160,20 @@ export const useVPNStore = create<VPNState>()(
         totalDownloaded: 0,
         connectedSince: null,
       },
+      wgConfig: null,
       servers: mockServers,
       selectedServer: mockServers[0],
       favoriteServerIds: [],
+      isLoadingServers: false,
+      serversError: null,
+      deviceId: null,
+      clientIp: null,
       autoConnect: false,
       killSwitch: true,
       splitTunneling: false,
       customDns: "",
-      isAuthenticated: false,
-      userEmail: null,
-      subscriptionPlan: null,
 
-      // Actions
+      // Basic Actions
       setStatus: (status) => set({ status }),
       setCurrentServer: (server) => set({ currentServer: server }),
       setSelectedServer: (server) => set({ selectedServer: server }),
@@ -224,10 +182,12 @@ export const useVPNStore = create<VPNState>()(
       toggleFavorite: (serverId) =>
         set((state) => {
           const isFavorite = state.favoriteServerIds.includes(serverId);
+          const newFavorites = isFavorite
+            ? state.favoriteServerIds.filter((id) => id !== serverId)
+            : [...state.favoriteServerIds, serverId];
+
           return {
-            favoriteServerIds: isFavorite
-              ? state.favoriteServerIds.filter((id) => id !== serverId)
-              : [...state.favoriteServerIds, serverId],
+            favoriteServerIds: newFavorites,
             servers: state.servers.map((s) =>
               s.id === serverId ? { ...s, isFavorite: !isFavorite } : s
             ),
@@ -244,88 +204,252 @@ export const useVPNStore = create<VPNState>()(
       setSplitTunneling: (value) => set({ splitTunneling: value }),
       setCustomDns: (value) => set({ customDns: value }),
 
-      setAuth: (email, plan) =>
-        set({
-          isAuthenticated: true,
-          userEmail: email,
-          subscriptionPlan: plan,
-        }),
+      // API Actions
+      fetchServers: async () => {
+        set({ isLoadingServers: true, serversError: null });
 
-      logout: () =>
-        set({
-          isAuthenticated: false,
-          userEmail: null,
-          subscriptionPlan: null,
-        }),
+        try {
+          const response = await api.getServers();
+
+          if (response.error) {
+            // Fall back to mock servers if API fails
+            set({
+              serversError: response.error,
+              isLoadingServers: false,
+              servers: mockServers,
+            });
+            return;
+          }
+
+          const { favoriteServerIds } = get();
+          const servers = response.servers.map((s) =>
+            convertServer(s, favoriteServerIds)
+          );
+
+          // Use fetched servers if available, otherwise keep mocks
+          if (servers.length > 0) {
+            set({
+              servers,
+              isLoadingServers: false,
+              selectedServer: get().selectedServer || servers[0],
+            });
+          } else {
+            set({ isLoadingServers: false });
+          }
+        } catch (error) {
+          set({
+            serversError:
+              error instanceof Error ? error.message : "Failed to fetch servers",
+            isLoadingServers: false,
+          });
+        }
+      },
+
+      registerDevice: async (serverId?: string) => {
+        try {
+          const hardwareId = await api.getHardwareId();
+          const deviceType = api.getDeviceType();
+          const deviceName = `SACVPN ${deviceType.toUpperCase()}`;
+
+          const response = await api.registerDevice(
+            deviceName,
+            deviceType,
+            hardwareId,
+            serverId
+          );
+
+          if (response.success && response.device_id && response.config) {
+            set({
+              deviceId: response.device_id,
+              wgConfig: response.config,
+            });
+            return response.config;
+          }
+
+          return null;
+        } catch (error) {
+          console.error("Device registration failed:", error);
+          return null;
+        }
+      },
 
       connect: async () => {
-        const { selectedServer } = get();
+        const { selectedServer, deviceId } = get();
         if (!selectedServer) return;
 
         set({ status: "connecting" });
 
-        // TODO: Replace with actual Tauri command
-        // await invoke('connect_vpn', { serverId: selectedServer.id });
+        try {
+          let config = get().wgConfig;
 
-        // Simulate connection delay
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+          // If no config or different server, get new config
+          if (!config || !deviceId) {
+            config = await get().registerDevice(selectedServer.id);
 
-        set({
-          status: "connected",
-          currentServer: selectedServer,
-          connectionStats: {
-            uploadSpeed: 0,
-            downloadSpeed: 0,
-            totalUploaded: 0,
-            totalDownloaded: 0,
-            connectedSince: Date.now(),
-          },
-        });
-
-        // Start simulating stats
-        const interval = setInterval(() => {
-          const state = get();
-          if (state.status !== "connected") {
-            clearInterval(interval);
-            return;
+            if (!config) {
+              // Still allow demo mode without API
+              console.log("Running in demo mode - no API connection");
+            }
           }
-          set((s) => ({
+
+          // TODO: Replace with actual Tauri command to apply WireGuard config
+          // await invoke('connect_vpn', { config });
+
+          // Simulate connection
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          set({
+            status: "connected",
+            currentServer: selectedServer,
             connectionStats: {
-              ...s.connectionStats,
-              uploadSpeed: Math.random() * 500000 + 100000,
-              downloadSpeed: Math.random() * 2000000 + 500000,
-              totalUploaded:
-                s.connectionStats.totalUploaded + Math.random() * 50000,
-              totalDownloaded:
-                s.connectionStats.totalDownloaded + Math.random() * 200000,
+              uploadSpeed: 0,
+              downloadSpeed: 0,
+              totalUploaded: 0,
+              totalDownloaded: 0,
+              connectedSince: Date.now(),
             },
-          }));
-        }, 1000);
+          });
+
+          // Start telemetry reporting
+          const { deviceId: devId } = get();
+          if (devId) {
+            api.reportTelemetry({
+              device_id: devId,
+              is_connected: true,
+              client_version: api.getClientVersion(),
+              os_version: api.getOSVersion(),
+            });
+          }
+
+          // Simulate stats (replace with real WireGuard stats via Tauri)
+          const statsInterval = setInterval(() => {
+            const state = get();
+            if (state.status !== "connected") {
+              clearInterval(statsInterval);
+              return;
+            }
+            set((s) => ({
+              connectionStats: {
+                ...s.connectionStats,
+                uploadSpeed: Math.random() * 500000 + 100000,
+                downloadSpeed: Math.random() * 2000000 + 500000,
+                totalUploaded:
+                  s.connectionStats.totalUploaded + Math.random() * 50000,
+                totalDownloaded:
+                  s.connectionStats.totalDownloaded + Math.random() * 200000,
+              },
+            }));
+          }, 1000);
+        } catch (error) {
+          console.error("Connection failed:", error);
+          set({ status: "disconnected" });
+        }
       },
 
       disconnect: async () => {
         set({ status: "disconnecting" });
 
-        // TODO: Replace with actual Tauri command
-        // await invoke('disconnect_vpn');
+        try {
+          // TODO: Replace with actual Tauri command
+          // await invoke('disconnect_vpn');
 
-        await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 500));
 
-        set({
-          status: "disconnected",
-          currentServer: null,
-          connectionStats: {
-            uploadSpeed: 0,
-            downloadSpeed: 0,
-            totalUploaded: 0,
-            totalDownloaded: 0,
-            connectedSince: null,
-          },
-        });
+          // Report disconnect telemetry
+          const { deviceId, connectionStats } = get();
+          if (deviceId && connectionStats.connectedSince) {
+            const duration = Math.floor(
+              (Date.now() - connectionStats.connectedSince) / 1000
+            );
+            api.reportTelemetry({
+              device_id: deviceId,
+              is_connected: false,
+              bytes_sent: connectionStats.totalUploaded,
+              bytes_received: connectionStats.totalDownloaded,
+              connection_duration: duration,
+              disconnect_reason: "user_initiated",
+            });
+          }
+
+          set({
+            status: "disconnected",
+            currentServer: null,
+            connectionStats: {
+              uploadSpeed: 0,
+              downloadSpeed: 0,
+              totalUploaded: 0,
+              totalDownloaded: 0,
+              connectedSince: null,
+            },
+          });
+        } catch (error) {
+          console.error("Disconnect failed:", error);
+          set({ status: "disconnected" });
+        }
+      },
+
+      switchServer: async (newServerId: string) => {
+        const { deviceId, status } = get();
+        const wasConnected = status === "connected";
+
+        if (wasConnected) {
+          set({ status: "disconnecting" });
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
+        set({ status: "connecting" });
+
+        try {
+          if (deviceId) {
+            const response = await api.switchServer(deviceId, newServerId);
+
+            if (response.success && response.config) {
+              set({ wgConfig: response.config });
+
+              const newServer = get().servers.find((s) => s.id === newServerId);
+              if (newServer) {
+                set({ selectedServer: newServer });
+              }
+
+              // TODO: Apply new config via Tauri
+              // await invoke('connect_vpn', { config: response.config });
+
+              if (wasConnected) {
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+
+                set({
+                  status: "connected",
+                  currentServer: newServer || null,
+                  connectionStats: {
+                    uploadSpeed: 0,
+                    downloadSpeed: 0,
+                    totalUploaded: 0,
+                    totalDownloaded: 0,
+                    connectedSince: Date.now(),
+                  },
+                });
+              } else {
+                set({ status: "disconnected" });
+              }
+            } else {
+              throw new Error(response.error || "Server switch failed");
+            }
+          } else {
+            // No device registered, just update selection
+            const newServer = get().servers.find((s) => s.id === newServerId);
+            set({
+              selectedServer: newServer || null,
+              status: wasConnected ? "connected" : "disconnected",
+            });
+          }
+        } catch (error) {
+          console.error("Server switch failed:", error);
+          set({ status: wasConnected ? "connected" : "disconnected" });
+        }
       },
     }),
     {
-      name: "sacvpn-storage",
+      name: "sacvpn-vpn-storage",
       partialize: (state) => ({
         favoriteServerIds: state.favoriteServerIds,
         autoConnect: state.autoConnect,
@@ -333,6 +457,7 @@ export const useVPNStore = create<VPNState>()(
         splitTunneling: state.splitTunneling,
         customDns: state.customDns,
         selectedServer: state.selectedServer,
+        deviceId: state.deviceId,
       }),
     }
   )
