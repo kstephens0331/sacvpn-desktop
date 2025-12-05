@@ -9,7 +9,8 @@
   }
 
   body {
-    @apply bg-surface-950 text-white overflow-hidden;
+    @apply bg-dark-900 text-white overflow-hidden;
+    background: linear-gradient(135deg, #0a0a0f 0%, #12121a 50%, #082f49 100%);
   }
 
   * {
@@ -18,11 +19,11 @@
 }
 
 @layer components {
-  /* Connection Button Styles */
+  /* Connection Button Styles - Updated with hero colors */
   .connect-button {
     @apply relative w-48 h-48 rounded-full transition-all duration-500;
     @apply flex items-center justify-center;
-    @apply bg-gradient-to-br from-surface-800 to-surface-900;
+    @apply bg-gradient-to-br from-dark-800 to-dark-900;
     @apply border-4 border-surface-700;
     @apply shadow-2xl shadow-black/50;
     @apply hover:scale-105 active:scale-95;
@@ -30,32 +31,32 @@
   }
 
   .connect-button.connected {
-    @apply border-brand-500;
-    @apply shadow-brand-500/30;
-    animation: connected-pulse 2s ease-in-out infinite;
+    @apply border-accent-lime;
+    box-shadow: 0 0 60px rgba(132, 204, 22, 0.4);
+    animation: connected-pulse-lime 2s ease-in-out infinite;
   }
 
   .connect-button.connecting {
-    @apply border-yellow-500;
-    animation: connecting-spin 1s linear infinite;
+    @apply border-brand-400;
+    animation: connecting-glow 1s ease-in-out infinite;
   }
 
-  /* Server Card */
+  /* Server Card - Updated */
   .server-card {
     @apply relative overflow-hidden rounded-xl;
-    @apply bg-surface-850 border border-surface-700;
+    @apply bg-dark-800/80 backdrop-blur-xl border border-white/10;
     @apply p-4 cursor-pointer transition-all duration-200;
-    @apply hover:bg-surface-800 hover:border-surface-600;
+    @apply hover:bg-dark-700 hover:border-brand-500/30;
     @apply active:scale-[0.98];
   }
 
   .server-card.selected {
-    @apply border-brand-500 bg-brand-500/10;
+    @apply border-accent-lime bg-accent-lime/10;
   }
 
-  /* Glass Panel */
+  /* Glass Panel - Hero style */
   .glass-panel {
-    @apply bg-surface-900/80 backdrop-blur-xl;
+    @apply bg-dark-800/60 backdrop-blur-xl;
     @apply border border-white/10 rounded-2xl;
     @apply shadow-2xl shadow-black/50;
   }
@@ -63,7 +64,7 @@
   /* Title Bar */
   .title-bar {
     @apply h-8 flex items-center justify-between px-3;
-    @apply bg-surface-900 border-b border-surface-800;
+    @apply bg-dark-900 border-b border-white/10;
     -webkit-app-region: drag;
   }
 
@@ -71,37 +72,79 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Stats Card */
+  /* Stats Card - Updated with glassmorphism */
   .stats-card {
-    @apply bg-surface-850/50 rounded-xl p-4;
-    @apply border border-surface-700/50;
+    @apply bg-white/5 backdrop-blur-sm rounded-xl p-4;
+    @apply border border-white/10;
   }
 
-  /* Navigation Tab */
+  /* Navigation Tab - Updated */
   .nav-tab {
     @apply flex items-center gap-3 px-4 py-3 rounded-xl;
     @apply text-surface-400 transition-all duration-200;
-    @apply hover:bg-surface-800 hover:text-white;
+    @apply hover:bg-white/5 hover:text-white;
   }
 
   .nav-tab.active {
-    @apply bg-brand-500/10 text-brand-400;
+    @apply bg-brand-500/20 text-brand-400;
+  }
+
+  /* Premium Button - Like website CTA */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2;
+    @apply px-6 py-3 rounded-xl font-semibold;
+    @apply bg-gradient-to-r from-accent-lime to-emerald-500;
+    @apply text-white shadow-lg;
+    @apply hover:shadow-xl hover:shadow-accent-lime/30;
+    @apply transform hover:-translate-y-0.5 transition-all duration-300;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2;
+    @apply px-6 py-3 rounded-xl font-semibold;
+    @apply border-2 border-white/20 text-white;
+    @apply hover:bg-white/10 backdrop-blur-sm;
+    @apply transition-all duration-300;
+  }
+
+  /* Badge - Like website */
+  .badge {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-full;
+    @apply bg-white/10 backdrop-blur-sm border border-white/20;
+    @apply text-sm text-white/90;
+  }
+
+  .badge-lime {
+    @apply bg-accent-lime/20 border-accent-lime/30 text-accent-lime;
   }
 }
 
 @layer utilities {
-  /* Glow effects */
+  /* Glow effects - Updated */
   .glow-brand {
     box-shadow: 0 0 40px rgba(14, 165, 233, 0.4);
   }
 
-  .glow-green {
-    box-shadow: 0 0 40px rgba(34, 197, 94, 0.4);
+  .glow-lime {
+    box-shadow: 0 0 40px rgba(132, 204, 22, 0.4);
   }
 
-  /* Gradient text */
+  .glow-cyan {
+    box-shadow: 0 0 40px rgba(6, 182, 212, 0.4);
+  }
+
+  .glow-purple {
+    box-shadow: 0 0 40px rgba(139, 92, 246, 0.4);
+  }
+
+  /* Gradient text - Matching website hero */
   .gradient-text {
     @apply bg-gradient-to-r from-brand-400 via-accent-cyan to-accent-purple;
+    @apply bg-clip-text text-transparent;
+  }
+
+  .gradient-text-lime {
+    @apply bg-gradient-to-r from-accent-lime to-emerald-500;
     @apply bg-clip-text text-transparent;
   }
 
@@ -114,30 +157,39 @@
   .drag-region {
     -webkit-app-region: drag;
   }
+
+  /* Animation delay utilities */
+  .animation-delay-2000 {
+    animation-delay: 2s;
+  }
+
+  .animation-delay-4000 {
+    animation-delay: 4s;
+  }
 }
 
-/* Animations */
-@keyframes connected-pulse {
+/* Animations - Updated with website hero style */
+@keyframes connected-pulse-lime {
   0%,
   100% {
-    box-shadow: 0 0 20px rgba(14, 165, 233, 0.3),
+    box-shadow: 0 0 20px rgba(132, 204, 22, 0.3),
       0 25px 50px -12px rgba(0, 0, 0, 0.5);
   }
   50% {
-    box-shadow: 0 0 40px rgba(14, 165, 233, 0.5),
+    box-shadow: 0 0 50px rgba(132, 204, 22, 0.5),
       0 25px 50px -12px rgba(0, 0, 0, 0.5);
   }
 }
 
-@keyframes connecting-spin {
-  0% {
-    border-color: #eab308;
+@keyframes connecting-glow {
+  0%,
+  100% {
+    border-color: #38bdf8;
+    box-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
   }
   50% {
-    border-color: #facc15;
-  }
-  100% {
-    border-color: #eab308;
+    border-color: #06b6d4;
+    box-shadow: 0 0 40px rgba(6, 182, 212, 0.5);
   }
 }
 
@@ -152,4 +204,24 @@
 
 .animate-ping-slow {
   animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Blob animation for background */
+@keyframes blob {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+.animate-blob {
+  animation: blob 7s infinite;
 }

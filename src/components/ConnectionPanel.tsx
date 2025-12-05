@@ -87,7 +87,7 @@ export default function ConnectionPanel() {
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
-              className="absolute inset-0 -m-4 rounded-full bg-green-500/20 animate-ping-slow"
+              className="absolute inset-0 -m-4 rounded-full bg-accent-lime/20 animate-ping-slow"
             />
           )}
         </AnimatePresence>
@@ -100,20 +100,20 @@ export default function ConnectionPanel() {
           whileTap={{ scale: 0.98 }}
           className={`relative w-52 h-52 rounded-full transition-all duration-500 flex items-center justify-center ${
             isConnected
-              ? "bg-gradient-to-br from-green-500/20 to-green-600/20 border-4 border-green-500 shadow-[0_0_60px_rgba(34,197,94,0.4)]"
+              ? "bg-gradient-to-br from-accent-lime/20 to-emerald-600/20 border-4 border-accent-lime shadow-[0_0_60px_rgba(132,204,22,0.4)]"
               : isConnecting
-              ? "bg-gradient-to-br from-yellow-500/20 to-yellow-600/20 border-4 border-yellow-500 animate-pulse"
-              : "bg-gradient-to-br from-surface-800 to-surface-900 border-4 border-surface-700 hover:border-surface-600"
+              ? "bg-gradient-to-br from-brand-400/20 to-accent-cyan/20 border-4 border-brand-400 animate-pulse"
+              : "bg-gradient-to-br from-dark-800 to-dark-900 border-4 border-white/10 hover:border-brand-500/30"
           } disabled:cursor-not-allowed`}
         >
           {/* Inner circle */}
           <div
             className={`w-40 h-40 rounded-full flex flex-col items-center justify-center transition-all duration-500 ${
               isConnected
-                ? "bg-gradient-to-br from-green-500 to-green-600"
+                ? "bg-gradient-to-br from-accent-lime to-emerald-500"
                 : isConnecting
-                ? "bg-gradient-to-br from-yellow-500 to-yellow-600"
-                : "bg-gradient-to-br from-surface-700 to-surface-800"
+                ? "bg-gradient-to-br from-brand-400 to-accent-cyan"
+                : "bg-gradient-to-br from-dark-700 to-dark-800"
             }`}
           >
             {isConnected ? (
@@ -227,15 +227,15 @@ export default function ConnectionPanel() {
             exit={{ opacity: 0, y: 20 }}
             className="mt-8 flex items-center gap-6 text-sm"
           >
-            <div className="flex items-center gap-2 text-green-400">
+            <div className="flex items-center gap-2 text-accent-lime">
               <Lock className="w-4 h-4" />
               <span>AES-256 Encrypted</span>
             </div>
-            <div className="flex items-center gap-2 text-green-400">
+            <div className="flex items-center gap-2 text-accent-lime">
               <Shield className="w-4 h-4" />
               <span>No DNS Leaks</span>
             </div>
-            <div className="flex items-center gap-2 text-green-400">
+            <div className="flex items-center gap-2 text-accent-cyan">
               <Zap className="w-4 h-4" />
               <span>WireGuard Protocol</span>
             </div>
@@ -250,8 +250,9 @@ export default function ConnectionPanel() {
           animate={{ opacity: 1 }}
           className="flex items-center gap-4 mt-4"
         >
-          <div className="px-4 py-2 rounded-lg bg-surface-800/50 border border-surface-700 text-surface-400 text-sm">
-            <span className="text-green-400 font-semibold">WireGuard</span> • Fastest Protocol
+          <div className="badge">
+            <Zap className="w-4 h-4 text-accent-lime" />
+            <span><span className="text-accent-lime font-semibold">WireGuard</span> • Fastest Protocol</span>
           </div>
         </motion.div>
       )}

@@ -29,17 +29,24 @@ function App() {
   // TODO: Add proper login flow
 
   return (
-    <div className="h-screen flex flex-col bg-surface-950 overflow-hidden">
+    <div className="h-screen flex flex-col bg-dark-900 overflow-hidden relative">
+      {/* Animated background gradient orbs - like website hero */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-500/10 rounded-full blur-3xl animate-blob" />
+        <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-accent-purple/10 rounded-full blur-3xl animate-blob animation-delay-2000" />
+        <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-accent-cyan/10 rounded-full blur-3xl animate-blob animation-delay-4000" />
+      </div>
+
       {/* Custom Title Bar */}
       <TitleBar />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative z-10">
         {/* Sidebar Navigation */}
         <motion.aside
           initial={false}
           animate={{ width: sidebarCollapsed ? 72 : 240 }}
           transition={{ duration: 0.2 }}
-          className="flex flex-col bg-surface-900 border-r border-surface-800"
+          className="flex flex-col bg-dark-800/80 backdrop-blur-xl border-r border-white/10"
         >
           {/* Logo */}
           <div className="p-4 flex items-center gap-3">
@@ -69,7 +76,7 @@ function App() {
               collapsed={sidebarCollapsed}
               onClick={() => setActiveTab("connect")}
               badge={status === "connected" ? "ON" : undefined}
-              badgeColor={status === "connected" ? "green" : undefined}
+              badgeColor={status === "connected" ? "lime" : undefined}
             />
             <NavItem
               icon={Globe}
@@ -97,7 +104,7 @@ function App() {
           {/* Collapse Toggle */}
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="m-3 p-2 rounded-lg hover:bg-surface-800 text-surface-400 hover:text-white transition-colors"
+            className="m-3 p-2 rounded-lg hover:bg-white/10 text-surface-400 hover:text-white transition-colors"
           >
             {sidebarCollapsed ? (
               <ChevronRight className="w-5 h-5" />
@@ -142,7 +149,7 @@ interface NavItemProps {
   collapsed: boolean;
   onClick: () => void;
   badge?: string;
-  badgeColor?: "green" | "yellow" | "red";
+  badgeColor?: "lime" | "yellow" | "red";
 }
 
 function NavItem({
@@ -155,7 +162,7 @@ function NavItem({
   badgeColor,
 }: NavItemProps) {
   const badgeColors = {
-    green: "bg-green-500",
+    lime: "bg-accent-lime",
     yellow: "bg-yellow-500",
     red: "bg-red-500",
   };
@@ -166,7 +173,7 @@ function NavItem({
       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
         active
           ? "bg-brand-500/20 text-brand-400"
-          : "text-surface-400 hover:bg-surface-800 hover:text-white"
+          : "text-surface-400 hover:bg-white/10 hover:text-white"
       }`}
     >
       <Icon className="w-5 h-5 flex-shrink-0" />
@@ -185,7 +192,7 @@ function NavItem({
       {badge && !collapsed && (
         <span
           className={`text-xs px-2 py-0.5 rounded-full text-white font-semibold ${
-            badgeColors[badgeColor || "green"]
+            badgeColors[badgeColor || "lime"]
           }`}
         >
           {badge}
