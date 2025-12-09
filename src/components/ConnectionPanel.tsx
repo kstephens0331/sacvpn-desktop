@@ -10,8 +10,11 @@ import {
   ArrowDown,
   Zap,
   Lock,
+  User,
+  AlertCircle,
 } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
+import { useAuthStore } from "../stores/authStore";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -40,13 +43,17 @@ function formatDuration(ms: number): string {
   return `${secs}s`;
 }
 
-// Country flag emoji helper
-function getCountryFlag(countryCode: string): string {
-  const codePoints = countryCode
-    .toUpperCase()
-    .split("")
-    .map((char) => 127397 + char.charCodeAt(0));
-  return String.fromCodePoint(...codePoints);
+// Region flag emoji helper
+function getRegionFlag(region: string): string {
+  const regionFlags: Record<string, string> = {
+    "US East": "🇺🇸",
+    "US Central": "🇺🇸",
+    "US West": "🇺🇸",
+    "Europe": "🇪🇺",
+    "Asia": "🌏",
+    "Unknown": "🌍",
+  };
+  return regionFlags[region] || "🌍";
 }
 
 export default function ConnectionPanel() {
@@ -55,16 +62,21 @@ export default function ConnectionPanel() {
     currentServer,
     selectedServer,
     connectionStats,
+    connectionError,
     connect,
     disconnect,
+    clearConnectionError,
   } = useVPNStore();
+  const { user, subscription } = useAuthStore();
 
   const isConnected = status === "connected";
   const isConnecting = status === "connecting";
   const isDisconnecting = status === "disconnecting";
   const server = currentServer || selectedServer;
+  const isAuthenticated = !!user && !!subscription;
 
   const handleToggleConnection = async () => {
+    clearConnectionError();
     if (isConnected || isDisconnecting) {
       await disconnect();
     } else if (!isConnecting) {
@@ -76,8 +88,43 @@ export default function ConnectionPanel() {
     ? Date.now() - connectionStats.connectedSince
     : 0;
 
+  // Show login prompt if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-full p-8">
+        <div className="w-24 h-24 rounded-full bg-surface-800 flex items-center justify-center mb-6">
+          <User className="w-12 h-12 text-surface-400" />
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2">Sign In Required</h2>
+        <p className="text-surface-400 text-center max-w-md mb-6">
+          Please sign in to your SACVPN account to connect to the VPN.
+          {!subscription && user && (
+            <span className="block mt-2 text-yellow-400">
+              No active subscription found.
+            </span>
+          )}
+        </p>
+        <p className="text-sm text-surface-500">
+          Go to the Account tab to sign in
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center min-h-full p-8">
+      {/* Connection Error */}
+      {connectionError && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center gap-3 max-w-md"
+        >
+          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+          <p className="text-red-400 text-sm">{connectionError}</p>
+        </motion.div>
+      )}
+
       {/* Connection Button */}
       <motion.div className="relative mb-8">
         {/* Outer glow ring */}
@@ -157,10 +204,10 @@ export default function ConnectionPanel() {
           className="text-center mb-8"
         >
           <div className="flex items-center justify-center gap-3 mb-2">
-            <span className="text-3xl">{getCountryFlag(server.countryCode)}</span>
+            <span className="text-3xl">{getRegionFlag(server.region)}</span>
             <div>
-              <h2 className="text-2xl font-bold text-white">{server.city}</h2>
-              <p className="text-surface-400">{server.country}</p>
+              <h2 className="text-2xl font-bold text-white">{server.name}</h2>
+              <p className="text-surface-400">{server.region}</p>
             </div>
           </div>
 
@@ -169,10 +216,6 @@ export default function ConnectionPanel() {
               <span className="flex items-center gap-1">
                 <Activity className="w-4 h-4" />
                 {server.load}% load
-              </span>
-              <span className="flex items-center gap-1">
-                <Zap className="w-4 h-4" />
-                {server.latency}ms
               </span>
             </div>
           )}

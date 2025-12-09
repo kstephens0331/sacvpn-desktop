@@ -1,182 +1,56 @@
 /**
  * SACVPN API Service
- * Handles all communication with the Supabase Edge Functions
+ * Handles communication with the Railway backend for VPN operations
  */
 
-const API_BASE_URL = "https://ltwuqjmncldopkutiyak.supabase.co/functions/v1";
+import { supabase } from "../lib/supabase";
 
-// Store auth tokens
-let accessToken: string | null = null;
-let refreshToken: string | null = null;
+// Environment configuration
+export const API_URL = import.meta.env.VITE_API_URL || "https://scvpn-production.up.railway.app";
 
-export interface AuthResponse {
-  success: boolean;
-  user?: {
-    id: string;
-    email: string;
-    full_name: string | null;
-    avatar_url: string | null;
-  };
-  session?: {
-    access_token: string;
-    refresh_token: string;
-    expires_at: number;
-    expires_in: number;
-  };
-  subscription?: {
-    plan_name: string;
-    status: string;
-    device_limit: number;
-    devices_used: number;
-    expires_at: string | null;
-    features: string[];
-  };
-  error?: string;
-  needs_subscription?: boolean;
-  subscribe_url?: string;
-}
+// =============================================================================
+// WireGuard Configuration
+// =============================================================================
 
-export interface Server {
-  id: string;
-  name: string;
-  region: string;
-  country: string;
-  city: string;
-  load: number;
-  latency: number | null;
-  is_premium: boolean;
-  is_gaming_optimized: boolean;
-  is_streaming_optimized: boolean;
-}
-
-export interface ServersResponse {
-  servers: Server[];
-  grouped: Record<string, Server[]>;
-  has_premium: boolean;
-  total_count: number;
-  error?: string;
-}
-
-export interface DeviceRegistrationResponse {
-  success: boolean;
-  message: string;
-  device_id?: string;
-  server?: {
-    id: string;
-    name: string;
-    region: string;
-    city: string;
-  };
-  config?: string; // WireGuard config file content
-  error?: string;
-  device_count?: number;
-  device_limit?: number;
-}
-
-export interface ConfigResponse {
-  success: boolean;
-  device?: {
-    id: string;
-    name: string;
-    type: string;
-  };
-  server?: {
-    id: string;
-    name: string;
-    region: string;
-    country: string;
-    city: string;
-    endpoint: string;
-  };
-  config?: string;
-  client_ip?: string;
-  created_at?: string;
-  error?: string;
-  needs_registration?: boolean;
-}
-
-// Helper to get headers with auth
-function getHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
-  }
-
-  return headers;
-}
-
-// Save tokens to secure storage
-export function setTokens(access: string, refresh: string): void {
-  accessToken = access;
-  refreshToken = refresh;
-
-  // In production, use Tauri's secure storage
-  try {
-    localStorage.setItem("sacvpn_access_token", access);
-    localStorage.setItem("sacvpn_refresh_token", refresh);
-  } catch {
-    // Silent fail for SSR or restricted environments
-  }
-}
-
-// Load tokens from storage
-export function loadTokens(): boolean {
-  try {
-    accessToken = localStorage.getItem("sacvpn_access_token");
-    refreshToken = localStorage.getItem("sacvpn_refresh_token");
-    return !!accessToken;
-  } catch {
-    return false;
-  }
-}
-
-// Clear tokens
-export function clearTokens(): void {
-  accessToken = null;
-  refreshToken = null;
-  try {
-    localStorage.removeItem("sacvpn_access_token");
-    localStorage.removeItem("sacvpn_refresh_token");
-  } catch {
-    // Silent fail
-  }
-}
-
-// Check if authenticated
-export function isAuthenticated(): boolean {
-  return !!accessToken;
+export interface WireGuardConfigResponse {
+  configText: string;
+  qrCode?: string;
+  deviceName: string;
+  nodeName: string;
+  nodeRegion: string;
+  clientIp: string;
+  platform: string;
 }
 
 /**
- * Authenticate user
+ * Generate WireGuard keys for a device
  */
-export async function login(
-  email: string,
-  password: string,
-  deviceInfo?: {
-    name: string;
-    type: string;
-    os_version: string;
-    client_version: string;
+export async function generateWireGuardKey(deviceId: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) {
+    return { success: false, error: "Not authenticated" };
   }
-): Promise<AuthResponse> {
+
   try {
-    const response = await fetch(`${API_BASE_URL}/vpn-auth`, {
+    const response = await fetch(`${API_URL}/api/wireguard/generate-key`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, device_info: deviceInfo }),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ device_id: deviceId }),
     });
 
-    const data: AuthResponse = await response.json();
-
-    if (data.success && data.session) {
-      setTokens(data.session.access_token, data.session.refresh_token);
+    if (!response.ok) {
+      const error = await response.text();
+      return { success: false, error: error || "Failed to generate key" };
     }
 
-    return data;
+    return { success: true };
   } catch (error) {
     return {
       success: false,
@@ -186,173 +60,332 @@ export async function login(
 }
 
 /**
- * Get list of available VPN servers
+ * Get WireGuard configuration for a device
  */
-export async function getServers(): Promise<ServersResponse> {
+export async function getWireGuardConfig(deviceId: string): Promise<{
+  success: boolean;
+  config?: WireGuardConfigResponse;
+  error?: string;
+}> {
   try {
-    const response = await fetch(`${API_BASE_URL}/vpn-servers`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({}),
-    });
+    const response = await fetch(`${API_URL}/api/device/${deviceId}/config-data`);
 
-    return await response.json();
+    if (!response.ok) {
+      const error = await response.text();
+      return { success: false, error: error || "Failed to get config" };
+    }
+
+    const data = await response.json();
+    return { success: true, config: data };
   } catch (error) {
     return {
-      servers: [],
-      grouped: {},
-      has_premium: false,
-      total_count: 0,
+      success: false,
       error: error instanceof Error ? error.message : "Network error",
     };
   }
 }
 
 /**
- * Register a new device and get VPN configuration
+ * Download raw WireGuard config file content
+ */
+export async function downloadWireGuardConfig(deviceId: string): Promise<{
+  success: boolean;
+  configText?: string;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_URL}/api/device/${deviceId}/config`);
+
+    if (!response.ok) {
+      const error = await response.text();
+      return { success: false, error: error || "Failed to download config" };
+    }
+
+    const configText = await response.text();
+    return { success: true, configText };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Network error",
+    };
+  }
+}
+
+// =============================================================================
+// Device Management
+// =============================================================================
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  platform: string;
+  isActive: boolean;
+  createdAt: string;
+  hasConfig: boolean;
+}
+
+/**
+ * Register a new device in Supabase
  */
 export async function registerDevice(
-  deviceName: string,
-  deviceType: "windows" | "macos" | "linux" | "ios" | "android",
-  hardwareId?: string,
-  preferredServerId?: string
-): Promise<DeviceRegistrationResponse> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/vpn-register-device`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({
-        device_name: deviceName,
-        device_type: deviceType,
-        hardware_id: hardwareId,
-        preferred_server_id: preferredServerId,
-      }),
-    });
+  name: string,
+  platform: "windows" | "macos" | "linux"
+): Promise<{
+  success: boolean;
+  deviceId?: string;
+  error?: string;
+}> {
+  const { data: { session } } = await supabase.auth.getSession();
 
-    return await response.json();
+  if (!session) {
+    return { success: false, error: "Not authenticated" };
+  }
+
+  try {
+    // Check if device already exists for this user/platform
+    const { data: existingDevice } = await supabase
+      .from("devices")
+      .select("id")
+      .eq("user_id", session.user.id)
+      .eq("platform", platform)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (existingDevice) {
+      return { success: true, deviceId: existingDevice.id };
+    }
+
+    // Create new device
+    const { data: newDevice, error } = await supabase
+      .from("devices")
+      .insert({
+        user_id: session.user.id,
+        name,
+        platform,
+        is_active: true,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, deviceId: newDevice.id };
   } catch (error) {
     return {
       success: false,
-      message: "Failed to register device",
-      error: error instanceof Error ? error.message : "Network error",
+      error: error instanceof Error ? error.message : "Failed to register device",
     };
   }
 }
 
 /**
- * Get configuration for an existing device
+ * Get user's devices
  */
-export async function getConfig(
-  deviceId?: string,
-  hardwareId?: string,
-  serverId?: string
-): Promise<ConfigResponse> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/vpn-get-config`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({
-        device_id: deviceId,
-        hardware_id: hardwareId,
-        server_id: serverId,
-      }),
-    });
+export async function getUserDevices(): Promise<{
+  success: boolean;
+  devices?: DeviceInfo[];
+  error?: string;
+}> {
+  const { data: { session } } = await supabase.auth.getSession();
 
-    return await response.json();
+  if (!session) {
+    return { success: false, error: "Not authenticated" };
+  }
+
+  try {
+    const { data: devices, error } = await supabase
+      .from("devices")
+      .select(`
+        id,
+        name,
+        platform,
+        is_active,
+        created_at,
+        device_configs (id)
+      `)
+      .eq("user_id", session.user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    const deviceList: DeviceInfo[] = (devices || []).map((d: {
+      id: string;
+      name: string;
+      platform: string;
+      is_active: boolean;
+      created_at: string;
+      device_configs: { id: string }[] | null;
+    }) => ({
+      id: d.id,
+      name: d.name,
+      platform: d.platform,
+      isActive: d.is_active,
+      createdAt: d.created_at,
+      hasConfig: Array.isArray(d.device_configs) && d.device_configs.length > 0,
+    }));
+
+    return { success: true, devices: deviceList };
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Network error",
+      error: error instanceof Error ? error.message : "Failed to get devices",
     };
   }
 }
 
 /**
- * Switch to a different VPN server
+ * Deactivate a device
  */
-export async function switchServer(
-  deviceId: string,
-  newServerId: string
-): Promise<ConfigResponse> {
+export async function deactivateDevice(deviceId: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
   try {
-    const response = await fetch(`${API_BASE_URL}/vpn-switch-server`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify({
-        device_id: deviceId,
-        new_server_id: newServerId,
-      }),
-    });
+    const { error } = await supabase
+      .from("devices")
+      .update({ is_active: false })
+      .eq("id", deviceId);
 
-    return await response.json();
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Network error",
+      error: error instanceof Error ? error.message : "Failed to deactivate device",
     };
   }
+}
+
+// =============================================================================
+// Server List
+// =============================================================================
+
+export interface VpnServer {
+  id: string;
+  name: string;
+  ip: string;
+  load: number;
+  region: string;
+}
+
+/**
+ * Get available VPN servers from vps_hosts table
+ */
+export async function getServers(): Promise<{
+  success: boolean;
+  servers?: VpnServer[];
+  error?: string;
+}> {
+  try {
+    // Get server list
+    const { data: hosts, error: hostsError } = await supabase
+      .from("vps_hosts")
+      .select("id, name, ip");
+
+    if (hostsError) {
+      return { success: false, error: hostsError.message };
+    }
+
+    // Get latest metrics for load info
+    const { data: metrics } = await supabase
+      .from("vps_metrics")
+      .select("host_id, cpu, load1")
+      .order("ts", { ascending: false });
+
+    // Build metrics map (latest per host)
+    const metricsMap = new Map<string, { cpu: number; load1: number }>();
+    if (metrics) {
+      for (const m of metrics) {
+        if (!metricsMap.has(m.host_id)) {
+          metricsMap.set(m.host_id, { cpu: m.cpu, load1: m.load1 });
+        }
+      }
+    }
+
+    // Combine hosts with metrics
+    const servers: VpnServer[] = (hosts || []).map((h: { id: string; name: string; ip: string }) => {
+      const hostMetrics = metricsMap.get(h.id);
+      return {
+        id: h.id,
+        name: h.name,
+        ip: h.ip,
+        load: hostMetrics?.cpu || 0,
+        region: extractRegion(h.name),
+      };
+    });
+
+    return { success: true, servers };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to get servers",
+    };
+  }
+}
+
+// Helper to extract region from server name
+function extractRegion(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes("virginia") || lower.includes("va")) return "US East";
+  if (lower.includes("dallas") || lower.includes("tx")) return "US Central";
+  if (lower.includes("los angeles") || lower.includes("la") || lower.includes("california")) return "US West";
+  if (lower.includes("london") || lower.includes("uk")) return "Europe";
+  if (lower.includes("frankfurt") || lower.includes("germany")) return "Europe";
+  if (lower.includes("tokyo") || lower.includes("japan")) return "Asia";
+  if (lower.includes("singapore")) return "Asia";
+  return "Unknown";
+}
+
+// =============================================================================
+// Telemetry
+// =============================================================================
+
+export interface TelemetryData {
+  device_id: string;
+  is_connected: boolean;
+  bytes_sent?: number;
+  bytes_received?: number;
+  client_version?: string;
+  os_version?: string;
+  connection_duration?: number;
+  disconnect_reason?: string;
 }
 
 /**
  * Report telemetry data
  */
-export async function reportTelemetry(data: {
-  device_id: string;
-  is_connected: boolean;
-  bytes_sent?: number;
-  bytes_received?: number;
-  last_handshake?: string;
-  client_version?: string;
-  os_version?: string;
-  connection_duration?: number;
-  disconnect_reason?: string;
-}): Promise<{ success: boolean }> {
+export async function reportTelemetry(data: TelemetryData): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) return;
+
   try {
-    const response = await fetch(`${API_BASE_URL}/vpn-telemetry`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
+    await supabase.from("device_latest_telemetry").upsert({
+      device_id: data.device_id,
+      is_connected: data.is_connected,
+      last_seen: new Date().toISOString(),
     });
-
-    return await response.json();
   } catch {
-    // Telemetry failures should be silent
-    return { success: false };
+    // Telemetry failures are silent
   }
 }
 
-/**
- * Get hardware ID for this device
- * Uses Tauri API in production, generates a UUID in dev
- */
-export async function getHardwareId(): Promise<string> {
-  // Check if we already have one stored
-  try {
-    const stored = localStorage.getItem("sacvpn_hardware_id");
-    if (stored) return stored;
-  } catch {
-    // Silent fail
-  }
-
-  // In Tauri, we'd use the system info
-  // For now, generate a persistent UUID
-  const id = crypto.randomUUID();
-
-  try {
-    localStorage.setItem("sacvpn_hardware_id", id);
-  } catch {
-    // Silent fail
-  }
-
-  return id;
-}
+// =============================================================================
+// Utility Functions
+// =============================================================================
 
 /**
  * Get device type based on platform
  */
 export function getDeviceType(): "windows" | "macos" | "linux" {
   const platform = navigator.platform.toLowerCase();
-
   if (platform.includes("win")) return "windows";
   if (platform.includes("mac")) return "macos";
   return "linux";
@@ -369,5 +402,18 @@ export function getOSVersion(): string {
  * Get client version
  */
 export function getClientVersion(): string {
-  return "1.0.0"; // Update with actual version from package.json
+  return "1.0.0";
+}
+
+/**
+ * Generate device name
+ */
+export function generateDeviceName(): string {
+  const type = getDeviceType();
+  const typeNames = {
+    windows: "Windows PC",
+    macos: "Mac",
+    linux: "Linux PC",
+  };
+  return `SACVPN ${typeNames[type]}`;
 }

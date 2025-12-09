@@ -51,7 +51,7 @@ export default function StatusBar() {
           />
           <span className="text-surface-400">
             {isConnected
-              ? `Connected to ${currentServer?.city}`
+              ? `Connected to ${currentServer?.name}`
               : status === "connecting"
               ? "Connecting..."
               : "Not connected"}

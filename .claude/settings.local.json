@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run tauri build:*)",
+      "Bash(where:*)",
+      "Bash(\"$HOME/.cargo/bin/cargo\" --version)",
+      "Bash(\"%USERPROFILE%\\.cargo\\bin\\cargo\" --version)",
+      "Bash(set PATH=%USERPROFILE%.cargobin)",
+      "Bash(%PATH%)",
+      "Bash(export PATH=\"/c/Users/usmc3/.cargo/bin:$PATH\")",
+      "Bash(cargo --version:*)",
+      "Bash(node generate-icons.mjs:*)",
+      "Bash(gh release:*)",
+      "Bash(\"src-tauri/target/release/bundle/msi/SACVPN_1.0.0_x64_en-US.msi#SACVPN Windows Installer (MSI) - Enterprise\" )",
+      "Bash(\"src-tauri/target/release/bundle/nsis/SACVPN_1.0.0_x64-setup.exe#SACVPN Windows Setup (EXE) - Consumer\" )"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

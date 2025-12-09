@@ -1,21 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import * as api from "../services/api";
+import * as wireguard from "../services/wireguard";
+import * as tauriService from "../services/tauri";
 
 export interface Server {
   id: string;
   name: string;
-  country: string;
-  countryCode: string;
-  city: string;
+  region: string;
   ip: string;
   load: number;
-  latency: number;
   isFavorite: boolean;
   isRecommended: boolean;
-  isPremium: boolean;
-  isGaming: boolean;
-  isStreaming: boolean;
 }
 
 export type ConnectionStatus =
@@ -38,6 +34,7 @@ interface VPNState {
   currentServer: Server | null;
   connectionStats: ConnectionStats;
   wgConfig: string | null;
+  connectionError: string | null;
 
   // Servers
   servers: Server[];
@@ -55,6 +52,7 @@ interface VPNState {
   killSwitch: boolean;
   splitTunneling: boolean;
   customDns: string;
+  showNotifications: boolean;
 
   // Actions
   setStatus: (status: ConnectionStatus) => void;
@@ -67,85 +65,33 @@ interface VPNState {
   setKillSwitch: (value: boolean) => void;
   setSplitTunneling: (value: boolean) => void;
   setCustomDns: (value: string) => void;
+  setShowNotifications: (value: boolean) => void;
+  clearConnectionError: () => void;
 
   // API Actions
   fetchServers: () => Promise<void>;
-  registerDevice: (serverId?: string) => Promise<string | null>;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   switchServer: (newServerId: string) => Promise<void>;
+  startStatsPolling: () => void;
+  stopStatsPolling: () => void;
 }
 
-// Country code mapping
-const countryCodeMap: Record<string, string> = {
-  "United States": "US",
-  "United Kingdom": "GB",
-  Germany: "DE",
-  France: "FR",
-  Japan: "JP",
-  Australia: "AU",
-  Canada: "CA",
-  Netherlands: "NL",
-  Singapore: "SG",
-  Sweden: "SE",
-  Switzerland: "CH",
-  Brazil: "BR",
-  India: "IN",
-  "South Korea": "KR",
-};
+// Stats polling interval ID
+let statsIntervalId: ReturnType<typeof setInterval> | null = null;
 
 // Convert API server to local format
-function convertServer(apiServer: api.Server, favoriteIds: string[]): Server {
+function convertServer(apiServer: api.VpnServer, favoriteIds: string[]): Server {
   return {
     id: apiServer.id,
     name: apiServer.name,
-    country: apiServer.country,
-    countryCode: countryCodeMap[apiServer.country] || "XX",
-    city: apiServer.city,
-    ip: "",
+    region: apiServer.region,
+    ip: apiServer.ip,
     load: apiServer.load,
-    latency: apiServer.latency || 0,
     isFavorite: favoriteIds.includes(apiServer.id),
     isRecommended: apiServer.load < 50,
-    isPremium: apiServer.is_premium,
-    isGaming: apiServer.is_gaming_optimized,
-    isStreaming: apiServer.is_streaming_optimized,
   };
 }
-
-// Mock servers for offline/development
-const mockServers: Server[] = [
-  {
-    id: "us-east-1",
-    name: "Virginia",
-    country: "United States",
-    countryCode: "US",
-    city: "Virginia",
-    ip: "",
-    load: 45,
-    latency: 23,
-    isFavorite: false,
-    isRecommended: true,
-    isPremium: false,
-    isGaming: false,
-    isStreaming: false,
-  },
-  {
-    id: "us-central-1",
-    name: "Dallas",
-    country: "United States",
-    countryCode: "US",
-    city: "Dallas",
-    ip: "",
-    load: 32,
-    latency: 35,
-    isFavorite: false,
-    isRecommended: true,
-    isPremium: false,
-    isGaming: true,
-    isStreaming: false,
-  },
-];
 
 export const useVPNStore = create<VPNState>()(
   persist(
@@ -161,8 +107,9 @@ export const useVPNStore = create<VPNState>()(
         connectedSince: null,
       },
       wgConfig: null,
-      servers: mockServers,
-      selectedServer: mockServers[0],
+      connectionError: null,
+      servers: [],
+      selectedServer: null,
       favoriteServerIds: [],
       isLoadingServers: false,
       serversError: null,
@@ -172,6 +119,7 @@ export const useVPNStore = create<VPNState>()(
       killSwitch: true,
       splitTunneling: false,
       customDns: "",
+      showNotifications: true,
 
       // Basic Actions
       setStatus: (status) => set({ status }),
@@ -203,6 +151,8 @@ export const useVPNStore = create<VPNState>()(
       setKillSwitch: (value) => set({ killSwitch: value }),
       setSplitTunneling: (value) => set({ splitTunneling: value }),
       setCustomDns: (value) => set({ customDns: value }),
+      setShowNotifications: (value) => set({ showNotifications: value }),
+      clearConnectionError: () => set({ connectionError: null }),
 
       // API Actions
       fetchServers: async () => {
@@ -211,12 +161,10 @@ export const useVPNStore = create<VPNState>()(
         try {
           const response = await api.getServers();
 
-          if (response.error) {
-            // Fall back to mock servers if API fails
+          if (!response.success || !response.servers) {
             set({
-              serversError: response.error,
+              serversError: response.error || "Failed to fetch servers",
               isLoadingServers: false,
-              servers: mockServers,
             });
             return;
           }
@@ -226,16 +174,11 @@ export const useVPNStore = create<VPNState>()(
             convertServer(s, favoriteServerIds)
           );
 
-          // Use fetched servers if available, otherwise keep mocks
-          if (servers.length > 0) {
-            set({
-              servers,
-              isLoadingServers: false,
-              selectedServer: get().selectedServer || servers[0],
-            });
-          } else {
-            set({ isLoadingServers: false });
-          }
+          set({
+            servers,
+            isLoadingServers: false,
+            selectedServer: get().selectedServer || servers[0] || null,
+          });
         } catch (error) {
           set({
             serversError:
@@ -245,58 +188,63 @@ export const useVPNStore = create<VPNState>()(
         }
       },
 
-      registerDevice: async (serverId?: string) => {
-        try {
-          const hardwareId = await api.getHardwareId();
-          const deviceType = api.getDeviceType();
-          const deviceName = `SACVPN ${deviceType.toUpperCase()}`;
-
-          const response = await api.registerDevice(
-            deviceName,
-            deviceType,
-            hardwareId,
-            serverId
-          );
-
-          if (response.success && response.device_id && response.config) {
-            set({
-              deviceId: response.device_id,
-              wgConfig: response.config,
-            });
-            return response.config;
-          }
-
-          return null;
-        } catch (error) {
-          console.error("Device registration failed:", error);
-          return null;
-        }
-      },
-
       connect: async () => {
         const { selectedServer, deviceId } = get();
-        if (!selectedServer) return;
+        if (!selectedServer) {
+          set({ connectionError: "No server selected" });
+          return;
+        }
 
-        set({ status: "connecting" });
+        set({ status: "connecting", connectionError: null });
 
         try {
-          let config = get().wgConfig;
+          let currentDeviceId = deviceId;
 
-          // If no config or different server, get new config
-          if (!config || !deviceId) {
-            config = await get().registerDevice(selectedServer.id);
+          // Step 1: Register device if needed
+          if (!currentDeviceId) {
+            const deviceName = api.generateDeviceName();
+            const platform = api.getDeviceType();
 
-            if (!config) {
-              // Still allow demo mode without API
-              console.log("Running in demo mode - no API connection");
+            const registerResult = await api.registerDevice(deviceName, platform);
+
+            if (!registerResult.success || !registerResult.deviceId) {
+              set({
+                status: "disconnected",
+                connectionError: registerResult.error || "Failed to register device",
+              });
+              return;
             }
+
+            currentDeviceId = registerResult.deviceId;
+            set({ deviceId: currentDeviceId });
           }
 
-          // TODO: Replace with actual Tauri command to apply WireGuard config
-          // await invoke('connect_vpn', { config });
+          // Step 2: Generate WireGuard key if device doesn't have config
+          const keyResult = await api.generateWireGuardKey(currentDeviceId);
+          if (!keyResult.success) {
+            // Key might already exist, continue to get config
+          }
 
-          // Simulate connection
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          // Step 3: Get WireGuard config
+          const configResult = await api.getWireGuardConfig(currentDeviceId);
+
+          if (!configResult.success || !configResult.config) {
+            set({
+              status: "disconnected",
+              connectionError: configResult.error || "Failed to get VPN configuration",
+            });
+            return;
+          }
+
+          const configText = configResult.config.configText;
+          set({
+            wgConfig: configText,
+            clientIp: configResult.config.clientIp,
+          });
+
+          // Parse config and connect via Tauri backend
+          const vpnConfig = wireguard.parseWireGuardConfig(configText);
+          await wireguard.connectVpn(selectedServer.id, vpnConfig);
 
           set({
             status: "connected",
@@ -310,50 +258,38 @@ export const useVPNStore = create<VPNState>()(
             },
           });
 
-          // Start telemetry reporting
-          const { deviceId: devId } = get();
-          if (devId) {
-            api.reportTelemetry({
-              device_id: devId,
-              is_connected: true,
-              client_version: api.getClientVersion(),
-              os_version: api.getOSVersion(),
-            });
+          // Start polling for stats
+          get().startStatsPolling();
+
+          // Send notification
+          if (get().showNotifications) {
+            tauriService.notifyConnected(selectedServer.name);
           }
 
-          // Simulate stats (replace with real WireGuard stats via Tauri)
-          const statsInterval = setInterval(() => {
-            const state = get();
-            if (state.status !== "connected") {
-              clearInterval(statsInterval);
-              return;
-            }
-            set((s) => ({
-              connectionStats: {
-                ...s.connectionStats,
-                uploadSpeed: Math.random() * 500000 + 100000,
-                downloadSpeed: Math.random() * 2000000 + 500000,
-                totalUploaded:
-                  s.connectionStats.totalUploaded + Math.random() * 50000,
-                totalDownloaded:
-                  s.connectionStats.totalDownloaded + Math.random() * 200000,
-              },
-            }));
-          }, 1000);
+          // Report telemetry
+          api.reportTelemetry({
+            device_id: currentDeviceId,
+            is_connected: true,
+            client_version: api.getClientVersion(),
+            os_version: api.getOSVersion(),
+          });
         } catch (error) {
-          console.error("Connection failed:", error);
-          set({ status: "disconnected" });
+          set({
+            status: "disconnected",
+            connectionError: error instanceof Error ? error.message : "Connection failed",
+          });
         }
       },
 
       disconnect: async () => {
         set({ status: "disconnecting" });
 
-        try {
-          // TODO: Replace with actual Tauri command
-          // await invoke('disconnect_vpn');
+        // Stop stats polling
+        get().stopStatsPolling();
 
-          await new Promise((resolve) => setTimeout(resolve, 500));
+        try {
+          // Disconnect via Tauri backend
+          await wireguard.disconnectVpn();
 
           // Report disconnect telemetry
           const { deviceId, connectionStats } = get();
@@ -382,69 +318,76 @@ export const useVPNStore = create<VPNState>()(
               connectedSince: null,
             },
           });
+
+          // Send notification
+          if (get().showNotifications) {
+            tauriService.notifyDisconnected();
+          }
         } catch (error) {
-          console.error("Disconnect failed:", error);
-          set({ status: "disconnected" });
+          set({
+            status: "disconnected",
+            connectionError: error instanceof Error ? error.message : "Disconnect failed",
+          });
         }
       },
 
       switchServer: async (newServerId: string) => {
-        const { deviceId, status } = get();
+        const { status } = get();
         const wasConnected = status === "connected";
 
-        if (wasConnected) {
-          set({ status: "disconnecting" });
-          await new Promise((resolve) => setTimeout(resolve, 300));
+        // Find the new server
+        const newServer = get().servers.find((s) => s.id === newServerId);
+        if (!newServer) {
+          set({ connectionError: "Server not found" });
+          return;
         }
 
-        set({ status: "connecting" });
+        // Update selection
+        set({ selectedServer: newServer });
 
-        try {
-          if (deviceId) {
-            const response = await api.switchServer(deviceId, newServerId);
+        // If connected, reconnect to new server
+        if (wasConnected) {
+          await get().disconnect();
+          await get().connect();
+        }
+      },
 
-            if (response.success && response.config) {
-              set({ wgConfig: response.config });
+      startStatsPolling: () => {
+        // Stop existing polling if any
+        if (statsIntervalId) {
+          clearInterval(statsIntervalId);
+        }
 
-              const newServer = get().servers.find((s) => s.id === newServerId);
-              if (newServer) {
-                set({ selectedServer: newServer });
-              }
-
-              // TODO: Apply new config via Tauri
-              // await invoke('connect_vpn', { config: response.config });
-
-              if (wasConnected) {
-                await new Promise((resolve) => setTimeout(resolve, 1500));
-
-                set({
-                  status: "connected",
-                  currentServer: newServer || null,
-                  connectionStats: {
-                    uploadSpeed: 0,
-                    downloadSpeed: 0,
-                    totalUploaded: 0,
-                    totalDownloaded: 0,
-                    connectedSince: Date.now(),
-                  },
-                });
-              } else {
-                set({ status: "disconnected" });
-              }
-            } else {
-              throw new Error(response.error || "Server switch failed");
-            }
-          } else {
-            // No device registered, just update selection
-            const newServer = get().servers.find((s) => s.id === newServerId);
-            set({
-              selectedServer: newServer || null,
-              status: wasConnected ? "connected" : "disconnected",
-            });
+        // Poll stats every second when connected
+        statsIntervalId = setInterval(async () => {
+          const { status } = get();
+          if (status !== "connected") {
+            return;
           }
-        } catch (error) {
-          console.error("Server switch failed:", error);
-          set({ status: wasConnected ? "connected" : "disconnected" });
+
+          try {
+            const stats = await wireguard.getConnectionStats();
+            set({
+              connectionStats: {
+                uploadSpeed: stats.upload_speed,
+                downloadSpeed: stats.download_speed,
+                totalUploaded: stats.total_uploaded,
+                totalDownloaded: stats.total_downloaded,
+                connectedSince: stats.connected_since
+                  ? stats.connected_since * 1000
+                  : get().connectionStats.connectedSince,
+              },
+            });
+          } catch (error) {
+            console.error("Failed to get connection stats:", error);
+          }
+        }, 1000);
+      },
+
+      stopStatsPolling: () => {
+        if (statsIntervalId) {
+          clearInterval(statsIntervalId);
+          statsIntervalId = null;
         }
       },
     }),
@@ -456,6 +399,7 @@ export const useVPNStore = create<VPNState>()(
         killSwitch: state.killSwitch,
         splitTunneling: state.splitTunneling,
         customDns: state.customDns,
+        showNotifications: state.showNotifications,
         selectedServer: state.selectedServer,
         deviceId: state.deviceId,
       }),

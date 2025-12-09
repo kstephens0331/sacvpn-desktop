@@ -1,24 +1,30 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
   Star,
-  Zap,
   Activity,
   MapPin,
   ChevronRight,
   Globe,
   TrendingUp,
+  RefreshCw,
+  User,
 } from "lucide-react";
 import { useVPNStore, Server } from "../stores/vpnStore";
+import { useAuthStore } from "../stores/authStore";
 
-// Country flag emoji helper
-function getCountryFlag(countryCode: string): string {
-  const codePoints = countryCode
-    .toUpperCase()
-    .split("")
-    .map((char) => 127397 + char.charCodeAt(0));
-  return String.fromCodePoint(...codePoints);
+// Region flag emoji helper
+function getRegionFlag(region: string): string {
+  const regionFlags: Record<string, string> = {
+    "US East": "🇺🇸",
+    "US Central": "🇺🇸",
+    "US West": "🇺🇸",
+    "Europe": "🇪🇺",
+    "Asia": "🌏",
+    "Unknown": "🌍",
+  };
+  return regionFlags[region] || "🌍";
 }
 
 interface ServerListProps {
@@ -34,12 +40,25 @@ export default function ServerList({ onServerSelect }: ServerListProps) {
     toggleFavorite,
     status,
     connect,
+    fetchServers,
+    isLoadingServers,
+    serversError,
   } = useVPNStore();
+  const { user, subscription } = useAuthStore();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "favorites" | "recommended">(
     "all"
   );
+
+  const isAuthenticated = !!user && !!subscription;
+
+  // Fetch servers on mount (only if authenticated)
+  useEffect(() => {
+    if (isAuthenticated && servers.length === 0) {
+      fetchServers();
+    }
+  }, [isAuthenticated, servers.length, fetchServers]);
 
   // Filter and sort servers
   const filteredServers = useMemo(() => {
@@ -51,8 +70,7 @@ export default function ServerList({ onServerSelect }: ServerListProps) {
       filtered = filtered.filter(
         (s) =>
           s.name.toLowerCase().includes(query) ||
-          s.country.toLowerCase().includes(query) ||
-          s.city.toLowerCase().includes(query)
+          s.region.toLowerCase().includes(query)
       );
     }
 
@@ -63,18 +81,18 @@ export default function ServerList({ onServerSelect }: ServerListProps) {
       filtered = filtered.filter((s) => s.isRecommended);
     }
 
-    // Sort by latency
-    return filtered.sort((a, b) => a.latency - b.latency);
+    // Sort by load (lower is better)
+    return filtered.sort((a, b) => a.load - b.load);
   }, [servers, searchQuery, activeTab, favoriteServerIds]);
 
-  // Group servers by country
+  // Group servers by region
   const groupedServers = useMemo(() => {
     const groups: Record<string, Server[]> = {};
     filteredServers.forEach((server) => {
-      if (!groups[server.country]) {
-        groups[server.country] = [];
+      if (!groups[server.region]) {
+        groups[server.region] = [];
       }
-      groups[server.country].push(server);
+      groups[server.region].push(server);
     });
     return groups;
   }, [filteredServers]);
@@ -92,15 +110,51 @@ export default function ServerList({ onServerSelect }: ServerListProps) {
     onServerSelect();
   };
 
+  // Show login prompt if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <div className="w-24 h-24 rounded-full bg-surface-800 flex items-center justify-center mb-6">
+          <User className="w-12 h-12 text-surface-400" />
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2">Sign In Required</h2>
+        <p className="text-surface-400 text-center max-w-md mb-6">
+          Please sign in to your SACVPN account to view available servers.
+        </p>
+        <p className="text-sm text-surface-500">
+          Go to the Account tab to sign in
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full p-6">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white mb-2">Server Locations</h1>
-        <p className="text-surface-400">
-          Choose from {servers.length} servers worldwide
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white mb-2">Server Locations</h1>
+          <p className="text-surface-400">
+            {servers.length > 0
+              ? `Choose from ${servers.length} servers worldwide`
+              : "Loading servers..."}
+          </p>
+        </div>
+        <button
+          onClick={() => fetchServers()}
+          disabled={isLoadingServers}
+          className="p-2 rounded-lg bg-surface-800 text-surface-400 hover:text-white hover:bg-surface-700 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-5 h-5 ${isLoadingServers ? "animate-spin" : ""}`} />
+        </button>
       </div>
+
+      {/* Error message */}
+      {serversError && (
+        <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+          {serversError}
+        </div>
+      )}
 
       {/* Search and Tabs */}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
@@ -141,7 +195,12 @@ export default function ServerList({ onServerSelect }: ServerListProps) {
 
       {/* Server List */}
       <div className="flex-1 overflow-auto -mx-2 px-2">
-        {Object.entries(groupedServers).length === 0 ? (
+        {isLoadingServers ? (
+          <div className="flex flex-col items-center justify-center h-full text-surface-400">
+            <RefreshCw className="w-12 h-12 mb-4 animate-spin opacity-50" />
+            <p className="text-lg font-medium">Loading servers...</p>
+          </div>
+        ) : Object.entries(groupedServers).length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-surface-400">
             <Globe className="w-16 h-16 mb-4 opacity-50" />
             <p className="text-lg font-medium">No servers found</p>
@@ -149,22 +208,20 @@ export default function ServerList({ onServerSelect }: ServerListProps) {
           </div>
         ) : (
           <div className="space-y-6">
-            {Object.entries(groupedServers).map(([country, countryServers]) => (
-              <div key={country}>
-                {/* Country Header */}
+            {Object.entries(groupedServers).map(([region, regionServers]) => (
+              <div key={region}>
+                {/* Region Header */}
                 <div className="flex items-center gap-2 mb-3 px-1">
-                  <span className="text-xl">
-                    {getCountryFlag(countryServers[0].countryCode)}
-                  </span>
-                  <span className="font-semibold text-white">{country}</span>
+                  <span className="text-xl">{getRegionFlag(region)}</span>
+                  <span className="font-semibold text-white">{region}</span>
                   <span className="text-surface-500 text-sm">
-                    ({countryServers.length})
+                    ({regionServers.length})
                   </span>
                 </div>
 
                 {/* Server Cards */}
                 <div className="space-y-2">
-                  {countryServers.map((server) => (
+                  {regionServers.map((server) => (
                     <ServerCard
                       key={server.id}
                       server={server}
@@ -221,21 +278,17 @@ function ServerCard({
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <MapPin className="w-4 h-4 text-surface-400" />
-            <span className="font-medium text-white">{server.city}</span>
+            <span className="font-medium text-white">{server.name}</span>
             {server.isRecommended && (
               <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs font-medium">
-                Recommended
+                Low Load
               </span>
             )}
           </div>
           <div className="flex items-center gap-4 mt-1.5 text-sm text-surface-400">
-            <span className="flex items-center gap-1">
-              <Zap className="w-3.5 h-3.5" />
-              {server.latency}ms
-            </span>
             <span className={`flex items-center gap-1 ${loadColor}`}>
               <Activity className="w-3.5 h-3.5" />
-              {server.load}%
+              {Math.round(server.load)}% load
             </span>
           </div>
         </div>

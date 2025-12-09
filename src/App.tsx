@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield,
@@ -16,6 +16,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import AccountPanel from "./components/AccountPanel";
 import StatusBar from "./components/StatusBar";
 import { useVPNStore } from "./stores/vpnStore";
+import { useAuthStore } from "./stores/authStore";
 
 type Tab = "connect" | "servers" | "settings" | "account";
 
@@ -23,10 +24,19 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>("connect");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { status } = useVPNStore();
+  const { checkAuth, user } = useAuthStore();
 
-  // If not authenticated, show login
-  // For now, we'll auto-authenticate for demo
-  // TODO: Add proper login flow
+  // Check auth on startup
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  // Redirect to account tab if not authenticated
+  useEffect(() => {
+    if (!user && activeTab !== "account") {
+      setActiveTab("account");
+    }
+  }, [user, activeTab]);
 
   return (
     <div className="h-screen flex flex-col bg-dark-900 overflow-hidden relative">

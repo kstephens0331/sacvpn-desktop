@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Shield,
@@ -13,6 +13,7 @@ import {
   Layers,
 } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
+import * as tauriService from "../services/tauri";
 
 export default function SettingsPanel() {
   const {
@@ -20,16 +21,32 @@ export default function SettingsPanel() {
     killSwitch,
     splitTunneling,
     customDns,
+    showNotifications,
     setAutoConnect,
     setKillSwitch,
     setSplitTunneling,
     setCustomDns,
+    setShowNotifications,
   } = useVPNStore();
 
   const [dnsInput, setDnsInput] = useState(customDns);
+  const [launchAtStartup, setLaunchAtStartup] = useState(false);
+
+  // Check autostart status on mount
+  useEffect(() => {
+    tauriService.isAutostartEnabled().then(setLaunchAtStartup);
+  }, []);
 
   const handleDnsBlur = () => {
     setCustomDns(dnsInput);
+  };
+
+  const handleLaunchAtStartupToggle = async () => {
+    const newValue = !launchAtStartup;
+    const success = await tauriService.toggleAutostart(newValue);
+    if (success) {
+      setLaunchAtStartup(newValue);
+    }
   };
 
   return (
@@ -165,20 +182,21 @@ export default function SettingsPanel() {
           <SettingToggle
             title="Launch at startup"
             description="Start SACVPN when your computer boots"
-            enabled={false}
-            onToggle={() => {}}
+            enabled={launchAtStartup}
+            onToggle={handleLaunchAtStartupToggle}
           />
           <SettingToggle
             title="Minimize to system tray"
             description="Keep running in the background when closed"
             enabled={true}
             onToggle={() => {}}
+            locked
           />
           <SettingToggle
             title="Show notifications"
             description="Get notified about connection status changes"
-            enabled={true}
-            onToggle={() => {}}
+            enabled={showNotifications}
+            onToggle={() => setShowNotifications(!showNotifications)}
           />
         </SettingsSection>
 

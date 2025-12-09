@@ -8,36 +8,32 @@ import {
   Shield,
   Zap,
   Monitor,
-  Gift,
-  Copy,
-  Check,
+  Loader2,
 } from "lucide-react";
-import { useVPNStore } from "../stores/vpnStore";
+import { useAuthStore } from "../stores/authStore";
 
 export default function AccountPanel() {
-  const { isAuthenticated, userEmail, subscriptionPlan, logout, setAuth } =
-    useVPNStore();
-  const [copied, setCopied] = useState(false);
+  const { user, subscription, logout, login, isLoading, error, clearError } =
+    useAuthStore();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-  // Demo login for testing
-  const handleDemoLogin = () => {
-    setAuth("demo@sacvpn.com", "Personal Pro");
+  const isAuthenticated = user !== null;
+  const userEmail = user?.email || "";
+  const subscriptionPlan = subscription?.planName || "Free";
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    await login(email, password);
   };
 
-  // Demo data
-  const referralCode = "SACVPN-DEMO";
-  const referralLink = `https://sacvpn.com/ref/${referralCode}`;
-  const devicesUsed = 3;
-  const devicesLimit = 5;
-  const subscriptionExpiry = new Date(
-    Date.now() + 30 * 24 * 60 * 60 * 1000
-  ).toLocaleDateString();
-
-  const copyReferralLink = () => {
-    navigator.clipboard.writeText(referralLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  // Subscription data
+  const devicesUsed = subscription?.devicesUsed || 0;
+  const devicesLimit = subscription?.deviceLimit || 5;
+  const subscriptionExpiry = subscription?.expiresAt
+    ? new Date(subscription.expiresAt).toLocaleDateString()
+    : "N/A";
 
   if (!isAuthenticated) {
     return (
@@ -57,8 +53,20 @@ export default function AccountPanel() {
           </div>
 
           {/* Login Form */}
-          <div className="glass-panel p-6">
+          <form onSubmit={handleLogin} className="glass-panel p-6">
             <div className="space-y-4">
+              {error && (
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                  {error}
+                  <button
+                    type="button"
+                    onClick={clearError}
+                    className="ml-2 underline hover:no-underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-surface-300 mb-2">
                   Email Address
@@ -66,7 +74,10 @@ export default function AccountPanel() {
                 <input
                   type="email"
                   placeholder="you@example.com"
-                  className="w-full h-12 px-4 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full h-12 px-4 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 focus:outline-none focus:border-brand-500 transition-colors disabled:opacity-50"
                 />
               </div>
               <div>
@@ -76,14 +87,25 @@ export default function AccountPanel() {
                 <input
                   type="password"
                   placeholder="••••••••"
-                  className="w-full h-12 px-4 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full h-12 px-4 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 focus:outline-none focus:border-brand-500 transition-colors disabled:opacity-50"
                 />
               </div>
               <button
-                onClick={handleDemoLogin}
-                className="w-full h-12 rounded-xl bg-gradient-to-r from-brand-500 to-accent-cyan text-white font-semibold hover:shadow-lg hover:shadow-brand-500/25 transition-all"
+                type="submit"
+                disabled={isLoading || !email || !password}
+                className="w-full h-12 rounded-xl bg-gradient-to-r from-brand-500 to-accent-cyan text-white font-semibold hover:shadow-lg hover:shadow-brand-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Sign In
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign In"
+                )}
               </button>
             </div>
 
@@ -92,13 +114,25 @@ export default function AccountPanel() {
                 Don't have an account?{" "}
                 <a
                   href="https://sacvpn.com/pricing"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="text-brand-400 hover:underline"
                 >
-                  Start free trial
+                  Create account
+                </a>
+              </p>
+              <p className="text-surface-500 text-xs mt-2">
+                <a
+                  href="https://sacvpn.com/forgot-password"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-surface-300"
+                >
+                  Forgot password?
                 </a>
               </p>
             </div>
-          </div>
+          </form>
         </div>
       </div>
     );
@@ -130,7 +164,7 @@ export default function AccountPanel() {
             </div>
           </div>
           <button
-            onClick={logout}
+            onClick={() => logout()}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
           >
             <LogOut className="w-4 h-4" />
@@ -186,42 +220,6 @@ export default function AccountPanel() {
               {feature.text}
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* Referral Program */}
-      <div className="glass-panel p-6 mb-6 bg-gradient-to-r from-accent-pink/10 to-accent-purple/10 border-accent-pink/20">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-xl bg-accent-pink/20">
-            <Gift className="w-6 h-6 text-accent-pink" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-white">
-              Refer Friends, Earn Rewards
-            </h3>
-            <p className="text-surface-400 text-sm">
-              Both you and your friend get 1 free month
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-surface-900/50 rounded-xl p-4 flex items-center gap-3">
-          <div className="flex-1">
-            <p className="text-xs text-surface-400 mb-1">Your referral link</p>
-            <p className="text-sm text-white font-mono truncate">
-              {referralLink}
-            </p>
-          </div>
-          <button
-            onClick={copyReferralLink}
-            className={`p-3 rounded-xl transition-all ${
-              copied
-                ? "bg-green-500/20 text-green-400"
-                : "bg-white/10 text-white hover:bg-white/20"
-            }`}
-          >
-            {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-          </button>
         </div>
       </div>
 
