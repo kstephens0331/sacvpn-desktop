@@ -65,9 +65,6 @@
     }
   },
   "plugins": {
-    "autostart": {
-      "macOSLaunchAgent": true
-    },
     "updater": {
       "pubkey": "",
       "endpoints": ["https://api.sacvpn.com/updates/{{target}}/{{arch}}/{{current_version}}"]
