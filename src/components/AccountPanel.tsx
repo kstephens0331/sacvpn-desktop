@@ -11,6 +11,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
+import { open } from "@tauri-apps/plugin-shell";
 
 export default function AccountPanel() {
   const { user, subscription, logout, login, isLoading, error, clearError } =
@@ -264,9 +265,15 @@ function QuickLink({
   description,
   isLast,
 }: QuickLinkProps) {
-  const handleClick = () => {
-    // Open in default browser
-    window.open(href, "_blank");
+  const handleClick = async () => {
+    // Open in default browser using Tauri shell plugin
+    try {
+      await open(href);
+    } catch (e) {
+      console.error("Failed to open URL:", e);
+      // Fallback to window.open
+      window.open(href, "_blank");
+    }
   };
 
   return (

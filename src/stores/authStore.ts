@@ -86,12 +86,13 @@ export const useAuthStore = create<AuthState>()(
             console.error("Profile fetch error:", profileError);
           }
 
-          // Fetch subscription
+          // Fetch subscription - get the most recent one for this user
           const { data: subscription, error: subError } = await supabase
             .from("subscriptions")
             .select("*")
             .eq("user_id", authData.user.id)
-            .in("status", ["active", "trialing"])
+            .order("created_at", { ascending: false })
+            .limit(1)
             .maybeSingle();
 
           if (subError) {
@@ -175,12 +176,13 @@ export const useAuthStore = create<AuthState>()(
               .eq("id", session.user.id)
               .maybeSingle();
 
-            // Fetch subscription
+            // Fetch subscription - get the most recent one
             const { data: subscription } = await supabase
               .from("subscriptions")
               .select("*")
               .eq("user_id", session.user.id)
-              .in("status", ["active", "trialing"])
+              .order("created_at", { ascending: false })
+              .limit(1)
               .maybeSingle();
 
             // Count devices
@@ -234,7 +236,8 @@ export const useAuthStore = create<AuthState>()(
             .from("subscriptions")
             .select("*")
             .eq("user_id", user.id)
-            .in("status", ["active", "trialing"])
+            .order("created_at", { ascending: false })
+            .limit(1)
             .maybeSingle();
 
           const { count: deviceCount } = await supabase
@@ -269,6 +272,8 @@ export const useAuthStore = create<AuthState>()(
     {
       name: "sacvpn-auth",
       partialize: (state) => ({
+        user: state.user,
+        subscription: state.subscription,
         deviceId: state.deviceId,
       }),
     }
@@ -278,6 +283,8 @@ export const useAuthStore = create<AuthState>()(
 // Helper to format plan names for display
 function formatPlanName(plan: string): string {
   const planNames: Record<string, string> = {
+    free: "Free Trial",
+    trial: "Free Trial",
     personal: "Personal",
     gaming: "Gaming Pro",
     business10: "Business (10)",

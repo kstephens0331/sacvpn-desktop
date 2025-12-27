@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SACVPN",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "com.sacvpn.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -19,7 +19,7 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
-        "decorations": false,
+        "decorations": true,
         "transparent": false,
         "center": true,
         "focus": true
@@ -66,8 +66,15 @@
   },
   "plugins": {
     "updater": {
+      "active": true,
+      "dialog": true,
+      "endpoints": [
+        "https://github.com/stephenscode/sacvpn-desktop/releases/latest/download/latest.json"
+      ],
       "pubkey": "",
-      "endpoints": ["https://api.sacvpn.com/updates/{{target}}/{{arch}}/{{current_version}}"]
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

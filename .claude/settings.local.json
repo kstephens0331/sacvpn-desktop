@@ -19,7 +19,15 @@
       "Bash(\"src-tauri/target/release/bundle/msi/SACVPN_1.0.0_x64_en-US.msi#SACVPN Windows Installer (MSI) - Enterprise\" )",
       "Bash(\"src-tauri/target/release/bundle/nsis/SACVPN_1.0.0_x64-setup.exe#SACVPN Windows Setup (EXE) - Consumer\" )",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\nComplete Tauri WireGuard integration and release v1.0.0\n\n- Add WireGuard config parser and Tauri bridge (wireguard.ts)\n- Add native platform services for autostart and notifications (tauri.ts)\n- Update vpnStore with stats polling and Tauri backend calls\n- Update SettingsPanel with live autostart toggle and notifications\n- Add auth protection to ConnectionPanel and ServerList\n- Generate app icons for all platforms\n- Configure Tauri plugins (autostart, notification, shell, store, updater)\n- Build and release Windows installers (MSI + NSIS)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+      "Bash(git commit -m \"$(cat <<''EOF''\nComplete Tauri WireGuard integration and release v1.0.0\n\n- Add WireGuard config parser and Tauri bridge (wireguard.ts)\n- Add native platform services for autostart and notifications (tauri.ts)\n- Update vpnStore with stats polling and Tauri backend calls\n- Update SettingsPanel with live autostart toggle and notifications\n- Add auth protection to ConnectionPanel and ServerList\n- Generate app icons for all platforms\n- Configure Tauri plugins (autostart, notification, shell, store, updater)\n- Build and release Windows installers (MSI + NSIS)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(\"c:/Users/usmc3/OneDrive/Documents/Stephens Code Programs/sacvpn-desktop/src-tauri/target/release/sacvpn-desktop.exe\")",
+      "Bash(echo:*)",
+      "Bash(taskkill:*)",
+      "Bash(tasklist:*)",
+      "Bash(TASKKILL:*)",
+      "Bash(start \"\" \"c:/Users/usmc3/OneDrive/Documents/Stephens Code Programs/sacvpn-desktop/src-tauri/target/release/sacvpn-desktop.exe\")"
     ],
     "deny": [],
     "ask": []

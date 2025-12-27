@@ -15,6 +15,7 @@ import ServerList from "./components/ServerList";
 import SettingsPanel from "./components/SettingsPanel";
 import AccountPanel from "./components/AccountPanel";
 import StatusBar from "./components/StatusBar";
+import UpdateNotification from "./components/UpdateNotification";
 import { useVPNStore } from "./stores/vpnStore";
 import { useAuthStore } from "./stores/authStore";
 
@@ -148,6 +149,9 @@ function App() {
           <StatusBar />
         </main>
       </div>
+
+      {/* Update Notification (appears when update is available) */}
+      <UpdateNotification />
     </div>
   );
 }

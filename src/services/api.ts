@@ -4,6 +4,7 @@
  */
 
 import { supabase } from "../lib/supabase";
+import { invoke } from "@tauri-apps/api/core";
 
 // Environment configuration
 export const API_URL = import.meta.env.VITE_API_URL || "https://scvpn-production.up.railway.app";
@@ -125,6 +126,30 @@ export interface DeviceInfo {
 }
 
 /**
+ * Get MAC address from Tauri backend
+ */
+export async function getMacAddress(): Promise<string | null> {
+  try {
+    const mac = await invoke<string>("get_mac_address");
+    return mac;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get device fingerprint from Tauri backend
+ */
+export async function getDeviceFingerprint(): Promise<string | null> {
+  try {
+    const fingerprint = await invoke<string>("get_device_fingerprint");
+    return fingerprint;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Register a new device in Supabase
  */
 export async function registerDevice(
@@ -142,7 +167,25 @@ export async function registerDevice(
   }
 
   try {
-    // Check if device already exists for this user/platform
+    // Get MAC address for device identification
+    const macAddress = await getMacAddress();
+
+    // Check if device already exists for this user with this MAC
+    if (macAddress) {
+      const { data: existingDeviceByMac } = await supabase
+        .from("devices")
+        .select("id")
+        .eq("user_id", session.user.id)
+        .eq("mac_address", macAddress)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (existingDeviceByMac) {
+        return { success: true, deviceId: existingDeviceByMac.id };
+      }
+    }
+
+    // Fallback: Check by platform
     const { data: existingDevice } = await supabase
       .from("devices")
       .select("id")
@@ -152,16 +195,24 @@ export async function registerDevice(
       .maybeSingle();
 
     if (existingDevice) {
+      // Update existing device with MAC address
+      if (macAddress) {
+        await supabase
+          .from("devices")
+          .update({ mac_address: macAddress })
+          .eq("id", existingDevice.id);
+      }
       return { success: true, deviceId: existingDevice.id };
     }
 
-    // Create new device
+    // Create new device with MAC address
     const { data: newDevice, error } = await supabase
       .from("devices")
       .insert({
         user_id: session.user.id,
         name,
         platform,
+        mac_address: macAddress,
         is_active: true,
       })
       .select("id")
@@ -276,71 +327,66 @@ export interface VpnServer {
 }
 
 /**
- * Get available VPN servers from vps_hosts table
+ * Get available VPN servers from the API
  */
 export async function getServers(): Promise<{
   success: boolean;
   servers?: VpnServer[];
   error?: string;
 }> {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) {
+    return { success: false, error: "Not authenticated" };
+  }
+
   try {
-    // Get server list
-    const { data: hosts, error: hostsError } = await supabase
-      .from("vps_hosts")
-      .select("id, name, ip");
-
-    if (hostsError) {
-      return { success: false, error: hostsError.message };
-    }
-
-    // Get latest metrics for load info
-    const { data: metrics } = await supabase
-      .from("vps_metrics")
-      .select("host_id, cpu, load1")
-      .order("ts", { ascending: false });
-
-    // Build metrics map (latest per host)
-    const metricsMap = new Map<string, { cpu: number; load1: number }>();
-    if (metrics) {
-      for (const m of metrics) {
-        if (!metricsMap.has(m.host_id)) {
-          metricsMap.set(m.host_id, { cpu: m.cpu, load1: m.load1 });
-        }
-      }
-    }
-
-    // Combine hosts with metrics
-    const servers: VpnServer[] = (hosts || []).map((h: { id: string; name: string; ip: string }) => {
-      const hostMetrics = metricsMap.get(h.id);
-      return {
-        id: h.id,
-        name: h.name,
-        ip: h.ip,
-        load: hostMetrics?.cpu || 0,
-        region: extractRegion(h.name),
-      };
+    // Call Supabase edge function for VPN servers
+    const SUPABASE_URL = "https://ltwuqjmncldopkutiyak.supabase.co";
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/vpn-servers`, {
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Failed to fetch servers:", errorText);
+      return { success: false, error: `Server error: ${response.status}` };
+    }
+
+    const data = await response.json();
+
+    if (!data.servers || !Array.isArray(data.servers)) {
+      console.error("Invalid server response:", data);
+      return { success: false, error: "Invalid server response" };
+    }
+
+    // Transform edge function response to VpnServer format
+    const servers: VpnServer[] = data.servers.map((server: {
+      id: string;
+      name: string;
+      region: string;
+      country: string;
+      city: string;
+      load: number;
+    }) => ({
+      id: server.id,
+      name: server.name,
+      ip: "", // Will be populated when connecting
+      load: server.load,
+      region: `${server.city}, ${server.country}`,
+    }));
 
     return { success: true, servers };
   } catch (error) {
+    console.error("Error fetching servers:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to get servers",
+      error: error instanceof Error ? error.message : "Failed to fetch servers",
     };
   }
-}
-
-// Helper to extract region from server name
-function extractRegion(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower.includes("virginia") || lower.includes("va")) return "US East";
-  if (lower.includes("dallas") || lower.includes("tx")) return "US Central";
-  if (lower.includes("los angeles") || lower.includes("la") || lower.includes("california")) return "US West";
-  if (lower.includes("london") || lower.includes("uk")) return "Europe";
-  if (lower.includes("frankfurt") || lower.includes("germany")) return "Europe";
-  if (lower.includes("tokyo") || lower.includes("japan")) return "Asia";
-  if (lower.includes("singapore")) return "Asia";
-  return "Unknown";
 }
 
 // =============================================================================

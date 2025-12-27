@@ -153,6 +153,100 @@ async fn clear_credentials(email: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn get_mac_address() -> Result<String, String> {
+    get_primary_mac_address().ok_or_else(|| "Could not get MAC address".to_string())
+}
+
+/// Get the primary network adapter's MAC address
+fn get_primary_mac_address() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // Use getmac command to get the primary MAC address
+        let output = Command::new("getmac")
+            .args(["/fo", "csv", "/nh"])
+            .output()
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Parse the first line to get the primary MAC
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() >= 1 {
+                let mac = parts[0].trim_matches('"').trim();
+                // Skip disconnected/empty entries
+                if !mac.is_empty() && mac != "N/A" && mac.contains('-') {
+                    return Some(mac.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let output = Command::new("ifconfig")
+            .arg("en0")
+            .output()
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.contains("ether") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    return Some(parts[1].to_uppercase().replace(":", "-"));
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let output = Command::new("cat")
+            .arg("/sys/class/net/eth0/address")
+            .output()
+            .or_else(|_| {
+                Command::new("cat")
+                    .arg("/sys/class/net/enp0s3/address")
+                    .output()
+            })
+            .ok()?;
+
+        let mac = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_uppercase()
+            .replace(":", "-");
+
+        if !mac.is_empty() {
+            return Some(mac);
+        }
+        None
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
+#[tauri::command]
+async fn get_device_fingerprint() -> Result<String, String> {
+    // Create a unique device fingerprint combining MAC + hostname
+    let mac = get_primary_mac_address().unwrap_or_else(|| "unknown".to_string());
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Create a hash-like fingerprint
+    let fingerprint = format!("{}:{}", mac, hostname);
+    Ok(fingerprint)
+}
+
 fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, "quit", "Quit SACVPN", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
@@ -238,6 +332,8 @@ fn main() {
             store_credentials,
             get_credentials,
             clear_credentials,
+            get_mac_address,
+            get_device_fingerprint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
