@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
 import * as tauriService from "../services/tauri";
+import packageJson from "../../package.json";
 
 export default function SettingsPanel() {
   const {
@@ -208,7 +209,7 @@ export default function SettingsPanel() {
                 SACVPN Desktop
               </h3>
               <p className="text-surface-400 text-sm">
-                Version 1.0.0 • WireGuard Protocol
+                Version {packageJson.version} • WireGuard Protocol
               </p>
             </div>
             <button className="px-4 py-2 rounded-lg bg-surface-800 text-surface-300 hover:bg-surface-700 transition-colors text-sm">
