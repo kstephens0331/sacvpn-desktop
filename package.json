@@ -1,6 +1,6 @@
 {
   "name": "sacvpn-desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "SACVPN Desktop Client - Premium VPN for Windows and macOS",
   "private": true,
   "type": "module",
