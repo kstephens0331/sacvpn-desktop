@@ -1,5 +1,6 @@
 import { Clock, ArrowUp, ArrowDown } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
+import packageJson from "../../package.json";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -88,7 +89,7 @@ export default function StatusBar() {
 
       {/* Right - Version (when not connected) */}
       {!isConnected && (
-        <div className="text-surface-500">SACVPN v1.0.0 • WireGuard</div>
+        <div className="text-surface-500">SACVPN v{packageJson.version} • WireGuard</div>
       )}
     </div>
   );
