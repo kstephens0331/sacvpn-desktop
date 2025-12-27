@@ -52,10 +52,10 @@ export async function downloadAndInstall(): Promise<boolean> {
     await update.downloadAndInstall((event) => {
       switch (event.event) {
         case "Started":
-          console.log(`Started downloading ${event.data.contentLength} bytes`);
+          console.log(`Started downloading update`);
           break;
         case "Progress":
-          console.log(`Downloaded ${event.data.chunkLength} bytes (${event.data.downloaded} / ${event.data.contentLength})`);
+          console.log(`Downloaded ${event.data.chunkLength} bytes`);
           break;
         case "Finished":
           console.log("Download finished");
