@@ -1,5 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import packageJson from "../../package.json";
 
 export interface UpdateInfo {
   available: boolean;
@@ -8,17 +9,23 @@ export interface UpdateInfo {
   body?: string;
 }
 
+const CURRENT_VERSION = packageJson.version;
+const UPDATE_URL = "https://github.com/kstephens0331/sacvpn-desktop/releases/latest/download/latest.json";
+
 /**
  * Check for available updates from GitHub Releases
+ * Uses direct HTTP fetch as fallback if Tauri updater fails
  */
 export async function checkForUpdates(): Promise<UpdateInfo> {
+  console.log("Checking for updates, current version:", CURRENT_VERSION);
+
+  // Try Tauri updater first
   try {
-    console.log("Checking for updates...");
+    console.log("Trying Tauri updater...");
     const update = await check();
-    console.log("Update check result:", update);
+    console.log("Tauri updater result:", update);
 
     if (update) {
-      console.log("Update available:", update.version);
       return {
         available: true,
         currentVersion: update.currentVersion,
@@ -27,17 +34,56 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
       };
     }
 
-    console.log("No update available, current version is latest");
     return {
       available: false,
-      currentVersion: "1.0.8",
+      currentVersion: CURRENT_VERSION,
     };
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("Failed to check for updates:", errorMessage);
-    console.error("Full error:", error);
-    throw new Error(`Update check failed: ${errorMessage}`);
+  } catch (tauriError) {
+    console.warn("Tauri updater failed, trying direct fetch:", tauriError);
   }
+
+  // Fallback: Direct HTTP fetch
+  try {
+    console.log("Fetching from:", UPDATE_URL);
+    const response = await window.fetch(UPDATE_URL, { method: "GET" });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { version: string; notes?: string };
+    console.log("Fetched update info:", data);
+
+    const latestVersion = data.version;
+    const isNewer = compareVersions(latestVersion, CURRENT_VERSION) > 0;
+
+    return {
+      available: isNewer,
+      currentVersion: CURRENT_VERSION,
+      latestVersion: latestVersion,
+      body: data.notes,
+    };
+  } catch (fetchError) {
+    console.error("Direct fetch also failed:", fetchError);
+    throw new Error(`Update check failed: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+  }
+}
+
+/**
+ * Compare two semver versions
+ * Returns: 1 if a > b, -1 if a < b, 0 if equal
+ */
+function compareVersions(a: string, b: string): number {
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const numA = partsA[i] || 0;
+    const numB = partsB[i] || 0;
+    if (numA > numB) return 1;
+    if (numA < numB) return -1;
+  }
+  return 0;
 }
 
 /**
