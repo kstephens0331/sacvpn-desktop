@@ -13,9 +13,12 @@ export interface UpdateInfo {
  */
 export async function checkForUpdates(): Promise<UpdateInfo> {
   try {
+    console.log("Checking for updates...");
     const update = await check();
+    console.log("Update check result:", update);
 
-    if (update?.available) {
+    if (update) {
+      console.log("Update available:", update.version);
       return {
         available: true,
         currentVersion: update.currentVersion,
@@ -24,13 +27,16 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
       };
     }
 
+    console.log("No update available, current version is latest");
     return {
       available: false,
-      currentVersion: update?.currentVersion || "1.0.0",
+      currentVersion: "1.0.7",
     };
-  } catch (error) {
-    console.error("Failed to check for updates:", error);
-    throw error;
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Failed to check for updates:", errorMessage);
+    console.error("Full error:", error);
+    throw new Error(`Update check failed: ${errorMessage}`);
   }
 }
 
@@ -42,7 +48,7 @@ export async function downloadAndInstall(): Promise<boolean> {
   try {
     const update = await check();
 
-    if (!update?.available) {
+    if (!update) {
       return false;
     }
 
