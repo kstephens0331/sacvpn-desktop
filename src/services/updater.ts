@@ -30,7 +30,7 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
     console.log("No update available, current version is latest");
     return {
       available: false,
-      currentVersion: "1.0.7",
+      currentVersion: "1.0.8",
     };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);

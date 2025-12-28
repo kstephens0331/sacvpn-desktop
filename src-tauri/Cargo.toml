@@ -1,6 +1,6 @@
 [package]
 name = "sacvpn-desktop"
-version = "1.0.7"
+version = "1.0.8"
 description = "SACVPN Desktop Client - Premium VPN for Windows and macOS"
 authors = ["Stephen's Code"]
 license = "MIT"
