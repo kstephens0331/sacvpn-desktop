@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default capabilities for SACVPN Desktop","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open","notification:default","os:default","process:default","store:default","autostart:default","updater:default"]}}
