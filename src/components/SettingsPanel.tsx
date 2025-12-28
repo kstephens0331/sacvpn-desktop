@@ -11,9 +11,11 @@ import {
   ToggleRight,
   ChevronRight,
   Layers,
+  RefreshCw,
 } from "lucide-react";
 import { useVPNStore } from "../stores/vpnStore";
 import * as tauriService from "../services/tauri";
+import { checkForUpdates, downloadAndInstall, UpdateInfo } from "../services/updater";
 import packageJson from "../../package.json";
 
 export default function SettingsPanel() {
@@ -32,11 +34,47 @@ export default function SettingsPanel() {
 
   const [dnsInput, setDnsInput] = useState(customDns);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'up-to-date' | 'error'>('idle');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   // Check autostart status on mount
   useEffect(() => {
     tauriService.isAutostartEnabled().then(setLaunchAtStartup);
   }, []);
+
+  const handleCheckForUpdates = async () => {
+    setUpdateStatus('checking');
+    setUpdateError(null);
+    try {
+      const info = await checkForUpdates();
+      setUpdateInfo(info);
+      if (info.available) {
+        setUpdateStatus('available');
+      } else {
+        setUpdateStatus('up-to-date');
+        // Reset to idle after 3 seconds
+        setTimeout(() => setUpdateStatus('idle'), 3000);
+      }
+    } catch (error) {
+      console.error('Update check failed:', error);
+      setUpdateError(error instanceof Error ? error.message : 'Failed to check for updates');
+      setUpdateStatus('error');
+      setTimeout(() => setUpdateStatus('idle'), 5000);
+    }
+  };
+
+  const handleDownloadUpdate = async () => {
+    setUpdateStatus('downloading');
+    try {
+      await downloadAndInstall();
+      // App will relaunch automatically
+    } catch (error) {
+      console.error('Update download failed:', error);
+      setUpdateError(error instanceof Error ? error.message : 'Failed to download update');
+      setUpdateStatus('error');
+    }
+  };
 
   const handleDnsBlur = () => {
     setCustomDns(dnsInput);
@@ -211,10 +249,51 @@ export default function SettingsPanel() {
               <p className="text-surface-400 text-sm">
                 Version {packageJson.version} • WireGuard Protocol
               </p>
+              {updateStatus === 'up-to-date' && (
+                <p className="text-green-400 text-sm mt-1">You're up to date!</p>
+              )}
+              {updateStatus === 'error' && updateError && (
+                <p className="text-red-400 text-sm mt-1">{updateError}</p>
+              )}
+              {updateStatus === 'available' && updateInfo && (
+                <p className="text-brand-400 text-sm mt-1">
+                  Update available: v{updateInfo.latestVersion}
+                </p>
+              )}
             </div>
-            <button className="px-4 py-2 rounded-lg bg-surface-800 text-surface-300 hover:bg-surface-700 transition-colors text-sm">
-              Check for Updates
-            </button>
+            <div className="flex gap-2">
+              {updateStatus === 'downloading' ? (
+                <button
+                  disabled
+                  className="px-4 py-2 rounded-lg bg-brand-500 text-white transition-colors text-sm opacity-50 flex items-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Downloading...
+                </button>
+              ) : updateStatus === 'available' ? (
+                <button
+                  onClick={handleDownloadUpdate}
+                  className="px-4 py-2 rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition-colors text-sm"
+                >
+                  Install Update
+                </button>
+              ) : (
+                <button
+                  onClick={handleCheckForUpdates}
+                  disabled={updateStatus === 'checking'}
+                  className="px-4 py-2 rounded-lg bg-surface-800 text-surface-300 hover:bg-surface-700 transition-colors text-sm disabled:opacity-50 flex items-center gap-2"
+                >
+                  {updateStatus === 'checking' ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Checking...
+                    </>
+                  ) : (
+                    'Check for Updates'
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
