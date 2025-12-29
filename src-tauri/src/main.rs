@@ -78,6 +78,9 @@ async fn get_connection_stats() -> Result<ConnectionStats, String> {
     let manager = get_vpn_manager();
     let vpn = manager.lock().await;
 
+    // Update stats from WireGuard before returning
+    let _ = vpn.update_stats().await;
+
     let stats = vpn.get_stats();
     Ok(ConnectionStats {
         upload_speed: stats.upload_speed,

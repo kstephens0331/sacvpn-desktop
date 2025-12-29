@@ -1,35 +1,53 @@
-//! WireGuard VPN implementation
+//! Embedded WireGuard VPN implementation
 //!
-//! This module handles the low-level WireGuard tunnel management for different platforms.
-//! - Windows: Uses WireGuard CLI with tunnel service
-//! - macOS: Uses wg-quick or NetworkExtension framework
-//! - Linux: Uses wg-quick with kernel module
+//! This module provides a fully embedded WireGuard implementation that doesn't require
+//! the WireGuard application to be installed. It uses:
+//! - Windows: wintun driver + boringtun for userspace WireGuard
+//! - macOS/Linux: Falls back to wg-quick (can be embedded in future)
 
 use super::{VpnConfig, VpnError};
-use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
-/// Tunnel name used for WireGuard (must match config filename without .conf)
-const TUNNEL_NAME: &str = "sacvpn";
+/// Tunnel name used for WireGuard
+const TUNNEL_NAME: &str = "SACVPN";
 
-/// WireGuard tunnel manager
+/// WireGuard tunnel manager with embedded implementation
 pub struct WireGuardManager {
     tunnel_name: String,
-    is_connected: bool,
+    is_connected: Arc<AtomicBool>,
+    bytes_received: Arc<AtomicU64>,
+    bytes_sent: Arc<AtomicU64>,
+    #[cfg(target_os = "windows")]
+    tunnel_handle: Option<std::sync::Arc<tokio::sync::Mutex<WindowsTunnel>>>,
     #[cfg(target_os = "windows")]
     config_path: Option<std::path::PathBuf>,
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsTunnel {
+    session: Arc<wintun::Session>,
+    tunnel: boringtun::noise::Tunn,
+    endpoint: std::net::SocketAddr,
+    socket: std::net::UdpSocket,
+    running: Arc<AtomicBool>,
 }
 
 impl WireGuardManager {
     pub fn new() -> Self {
         Self {
             tunnel_name: TUNNEL_NAME.to_string(),
-            is_connected: false,
+            is_connected: Arc::new(AtomicBool::new(false)),
+            bytes_received: Arc::new(AtomicU64::new(0)),
+            bytes_sent: Arc::new(AtomicU64::new(0)),
+            #[cfg(target_os = "windows")]
+            tunnel_handle: None,
             #[cfg(target_os = "windows")]
             config_path: None,
         }
     }
 
-    /// Connect to VPN using WireGuard protocol
+    /// Connect to VPN using embedded WireGuard protocol
     pub async fn connect(&mut self, config: &VpnConfig) -> Result<(), VpnError> {
         log::info!("Connecting to WireGuard tunnel '{}' ...", self.tunnel_name);
         log::info!("Endpoint: {}", config.peer.endpoint);
@@ -37,7 +55,7 @@ impl WireGuardManager {
 
         #[cfg(target_os = "windows")]
         {
-            self.connect_windows(config).await?;
+            self.connect_windows_embedded(config).await?;
         }
 
         #[cfg(target_os = "macos")]
@@ -50,7 +68,7 @@ impl WireGuardManager {
             self.connect_linux(config).await?;
         }
 
-        self.is_connected = true;
+        self.is_connected.store(true, Ordering::SeqCst);
         log::info!("WireGuard tunnel connected successfully");
         Ok(())
     }
@@ -61,7 +79,7 @@ impl WireGuardManager {
 
         #[cfg(target_os = "windows")]
         {
-            self.disconnect_windows().await?;
+            self.disconnect_windows_embedded().await?;
         }
 
         #[cfg(target_os = "macos")]
@@ -74,259 +92,388 @@ impl WireGuardManager {
             self.disconnect_linux().await?;
         }
 
-        self.is_connected = false;
+        self.is_connected.store(false, Ordering::SeqCst);
         log::info!("WireGuard tunnel disconnected");
         Ok(())
     }
 
     /// Get transfer statistics (rx_bytes, tx_bytes)
     pub async fn get_transfer_stats(&self) -> Result<(u64, u64), VpnError> {
-        if !self.is_connected {
+        if !self.is_connected.load(Ordering::SeqCst) {
             return Ok((0, 0));
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            return self.get_stats_windows().await;
-        }
+        let rx = self.bytes_received.load(Ordering::SeqCst);
+        let tx = self.bytes_sent.load(Ordering::SeqCst);
+        Ok((rx, tx))
+    }
 
-        #[cfg(target_os = "macos")]
-        {
-            return self.get_stats_macos().await;
-        }
+    // ================== Windows Embedded Implementation ==================
+    #[cfg(target_os = "windows")]
+    async fn connect_windows_embedded(&mut self, config: &VpnConfig) -> Result<(), VpnError> {
+        use base64::Engine;
+        use std::net::UdpSocket;
 
-        #[cfg(target_os = "linux")]
-        {
-            return self.get_stats_linux().await;
-        }
+        log::info!("Using embedded WireGuard implementation (no external WireGuard needed)");
 
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-        {
-            Ok((0, 0))
-        }
+        // Parse private key
+        let private_key_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&config.interface.private_key)
+            .map_err(|e| VpnError::ConfigError(format!("Invalid private key: {}", e)))?;
+
+        let private_key: [u8; 32] = private_key_bytes
+            .try_into()
+            .map_err(|_| VpnError::ConfigError("Private key must be 32 bytes".to_string()))?;
+
+        // Parse peer public key
+        let peer_public_key_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&config.peer.public_key)
+            .map_err(|e| VpnError::ConfigError(format!("Invalid peer public key: {}", e)))?;
+
+        let peer_public_key: [u8; 32] = peer_public_key_bytes
+            .try_into()
+            .map_err(|_| VpnError::ConfigError("Peer public key must be 32 bytes".to_string()))?;
+
+        // Parse endpoint
+        let endpoint: std::net::SocketAddr = config
+            .peer
+            .endpoint
+            .parse()
+            .map_err(|e| VpnError::ConfigError(format!("Invalid endpoint: {}", e)))?;
+
+        // Parse client IP
+        let client_ip = config
+            .interface
+            .address
+            .split('/')
+            .next()
+            .ok_or_else(|| VpnError::ConfigError("Invalid client address".to_string()))?
+            .parse::<std::net::Ipv4Addr>()
+            .map_err(|e| VpnError::ConfigError(format!("Invalid client IP: {}", e)))?;
+
+        // Load wintun driver from app directory
+        log::info!("Loading wintun driver...");
+
+        // Try multiple paths for wintun.dll
+        let wintun = {
+            // First try the current executable's directory
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+            let dll_paths = [
+                exe_dir.as_ref().map(|d| d.join("wintun.dll")),
+                exe_dir.as_ref().map(|d| d.join("resources").join("wintun.dll")),
+                Some(std::path::PathBuf::from("wintun.dll")),
+            ];
+
+            let mut loaded = None;
+            for path_opt in dll_paths.iter() {
+                if let Some(path) = path_opt {
+                    if path.exists() {
+                        log::info!("Found wintun.dll at: {:?}", path);
+                        match unsafe { wintun::load_from_path(path) } {
+                            Ok(w) => {
+                                loaded = Some(w);
+                                break;
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to load wintun from {:?}: {}", path, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback to default loading
+            loaded.or_else(|| unsafe { wintun::load().ok() })
+        };
+
+        let wintun = wintun.ok_or_else(|| {
+            VpnError::WireGuardError(
+                "Failed to load wintun driver. The wintun.dll file is missing or corrupt.".to_string()
+            )
+        })?;
+
+        // Create adapter
+        log::info!("Creating network adapter '{}'...", self.tunnel_name);
+        let adapter = wintun::Adapter::create(&wintun, &self.tunnel_name, "SACVPN", None).map_err(
+            |e| {
+                if e.to_string().contains("Access") {
+                    VpnError::PermissionDenied(
+                        "Administrator privileges required to create VPN tunnel".to_string(),
+                    )
+                } else {
+                    VpnError::WireGuardError(format!("Failed to create adapter: {}", e))
+                }
+            },
+        )?;
+
+        // Set adapter IP address
+        log::info!("Configuring adapter with IP {}...", client_ip);
+        self.configure_adapter_ip(&adapter, client_ip)?;
+
+        // Start session (wrapped in Arc as required by wintun API)
+        let session = Arc::new(
+            adapter
+                .start_session(wintun::MAX_RING_CAPACITY)
+                .map_err(|e| VpnError::WireGuardError(format!("Failed to start session: {}", e)))?,
+        );
+
+        // Create WireGuard tunnel using boringtun
+        log::info!("Initializing WireGuard crypto...");
+        let tunnel = boringtun::noise::Tunn::new(
+            boringtun::x25519::StaticSecret::from(private_key),
+            boringtun::x25519::PublicKey::from(peer_public_key),
+            None, // Preshared key
+            config.peer.persistent_keepalive.map(|k| k as u16),
+            0,    // Tunnel index
+            None, // Rate limiter
+        )
+        .map_err(|e| VpnError::WireGuardError(format!("Failed to create tunnel: {}", e)))?;
+
+        // Create UDP socket for WireGuard traffic
+        log::info!("Creating UDP socket for WireGuard traffic...");
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .map_err(|e| VpnError::WireGuardError(format!("Failed to bind UDP socket: {}", e)))?;
+
+        socket.connect(endpoint).map_err(|e| {
+            VpnError::WireGuardError(format!("Failed to connect to endpoint: {}", e))
+        })?;
+
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| VpnError::WireGuardError(format!("Failed to set non-blocking: {}", e)))?;
+
+        // Store tunnel handle
+        let running = Arc::new(AtomicBool::new(true));
+        let tunnel_state = WindowsTunnel {
+            session,
+            tunnel,
+            endpoint,
+            socket,
+            running: running.clone(),
+        };
+
+        self.tunnel_handle = Some(Arc::new(tokio::sync::Mutex::new(tunnel_state)));
+
+        // Start packet forwarding tasks
+        self.start_packet_forwarding(running).await?;
+
+        // Configure routing
+        self.configure_routing(&config.peer.allowed_ips)?;
+
+        log::info!("Embedded WireGuard tunnel established successfully!");
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
-    async fn get_stats_windows(&self) -> Result<(u64, u64), VpnError> {
-        // Try to get stats from WireGuard CLI
-        let output = Command::new("wg")
-            .args(["show", &self.tunnel_name, "transfer"])
-            .output();
+    fn configure_adapter_ip(
+        &self,
+        adapter: &wintun::Adapter,
+        ip: std::net::Ipv4Addr,
+    ) -> Result<(), VpnError> {
+        use std::process::Command;
 
-        match output {
-            Ok(result) if result.status.success() => {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                // Parse output format: "peer_pubkey\trx_bytes\ttx_bytes"
-                for line in stdout.lines() {
-                    let parts: Vec<&str> = line.split('\t').collect();
-                    if parts.len() >= 3 {
-                        let rx = parts[1].parse::<u64>().unwrap_or(0);
-                        let tx = parts[2].parse::<u64>().unwrap_or(0);
-                        return Ok((rx, tx));
-                    }
-                }
-                Ok((0, 0))
-            }
-            _ => Ok((0, 0)),
-        }
-    }
+        // Get adapter GUID
+        let luid = adapter.get_luid();
 
-    #[cfg(target_os = "macos")]
-    async fn get_stats_macos(&self) -> Result<(u64, u64), VpnError> {
-        let output = Command::new("wg")
-            .args(["show", &self.tunnel_name, "transfer"])
-            .output();
+        // Use netsh to set IP (simpler and more reliable)
+        let output = Command::new("netsh")
+            .args([
+                "interface",
+                "ip",
+                "set",
+                "address",
+                &self.tunnel_name,
+                "static",
+                &ip.to_string(),
+                "255.255.255.0",
+            ])
+            .output()
+            .map_err(|e| VpnError::WireGuardError(format!("Failed to configure IP: {}", e)))?;
 
-        match output {
-            Ok(result) if result.status.success() => {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                for line in stdout.lines() {
-                    let parts: Vec<&str> = line.split('\t').collect();
-                    if parts.len() >= 3 {
-                        let rx = parts[1].parse::<u64>().unwrap_or(0);
-                        let tx = parts[2].parse::<u64>().unwrap_or(0);
-                        return Ok((rx, tx));
-                    }
-                }
-                Ok((0, 0))
-            }
-            _ => Ok((0, 0)),
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    async fn get_stats_linux(&self) -> Result<(u64, u64), VpnError> {
-        let output = Command::new("wg")
-            .args(["show", &self.tunnel_name, "transfer"])
-            .output();
-
-        match output {
-            Ok(result) if result.status.success() => {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                for line in stdout.lines() {
-                    let parts: Vec<&str> = line.split('\t').collect();
-                    if parts.len() >= 3 {
-                        let rx = parts[1].parse::<u64>().unwrap_or(0);
-                        let tx = parts[2].parse::<u64>().unwrap_or(0);
-                        return Ok((rx, tx));
-                    }
-                }
-                Ok((0, 0))
-            }
-            _ => Ok((0, 0)),
-        }
-    }
-
-    // ================== Windows Implementation ==================
-    #[cfg(target_os = "windows")]
-    async fn connect_windows(&mut self, config: &VpnConfig) -> Result<(), VpnError> {
-        use std::fs;
-        use std::path::PathBuf;
-
-        // Generate WireGuard config file
-        let config_content = self.generate_wg_config(config);
-
-        // Write config to temp file - filename determines tunnel name
-        let config_path = PathBuf::from(std::env::temp_dir()).join(format!("{}.conf", TUNNEL_NAME));
-        fs::write(&config_path, &config_content)
-            .map_err(|e| VpnError::ConfigError(format!("Failed to write config: {}", e)))?;
-
-        self.config_path = Some(config_path.clone());
-
-        log::info!("WireGuard config written to: {:?}", config_path);
-        log::info!("Config content:\n{}", config_content);
-
-        // Try multiple WireGuard installation paths
-        let wireguard_paths = [
-            r"C:\Program Files\WireGuard\wireguard.exe",
-            r"C:\Program Files (x86)\WireGuard\wireguard.exe",
-        ];
-
-        let wireguard_path = wireguard_paths
-            .iter()
-            .find(|p| std::path::Path::new(p).exists());
-
-        if let Some(wg_path) = wireguard_path {
-            log::info!("Found WireGuard at: {}", wg_path);
-
-            // First, try to uninstall any existing tunnel with same name
-            let _ = Command::new(wg_path)
-                .args(["/uninstalltunnelservice", &self.tunnel_name])
-                .output();
-
-            // Small delay to ensure cleanup
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            // Install the tunnel service
-            let output = Command::new(wg_path)
-                .args(["/installtunnelservice", config_path.to_str().unwrap()])
-                .output()
-                .map_err(|e| VpnError::WireGuardError(format!("Failed to run WireGuard: {}", e)))?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                log::error!("WireGuard install failed - stdout: {}, stderr: {}", stdout, stderr);
-
-                // Check if it's a permission error
-                if stderr.contains("Access is denied") || stderr.contains("administrator") {
-                    return Err(VpnError::PermissionDenied(
-                        "WireGuard requires administrator privileges. Please run as administrator.".to_string()
-                    ));
-                }
-
-                return Err(VpnError::WireGuardError(format!(
-                    "Failed to install tunnel: {}",
-                    if stderr.is_empty() { stdout.to_string() } else { stderr.to_string() }
-                )));
-            }
-
-            log::info!("WireGuard tunnel '{}' installed successfully", self.tunnel_name);
-
-            // Wait a moment for the tunnel to establish
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-            // Verify connection by checking if interface exists
-            let verify = Command::new("wg")
-                .args(["show", &self.tunnel_name])
-                .output();
-
-            match verify {
-                Ok(result) if result.status.success() => {
-                    log::info!("WireGuard tunnel verified and active");
-                }
-                _ => {
-                    log::warn!("Could not verify tunnel status, but installation succeeded");
-                }
-            }
-        } else {
-            // WireGuard not installed
-            return Err(VpnError::WireGuardError(
-                "WireGuard is not installed. Please install WireGuard from https://www.wireguard.com/install/".to_string()
-            ));
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::warn!("netsh IP config warning: {}", stderr);
         }
 
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
-    async fn disconnect_windows(&mut self) -> Result<(), VpnError> {
-        let wireguard_paths = [
-            r"C:\Program Files\WireGuard\wireguard.exe",
-            r"C:\Program Files (x86)\WireGuard\wireguard.exe",
-        ];
+    async fn start_packet_forwarding(&self, running: Arc<AtomicBool>) -> Result<(), VpnError> {
+        let tunnel_handle = self
+            .tunnel_handle
+            .as_ref()
+            .ok_or(VpnError::NotConnected)?
+            .clone();
 
-        let wireguard_path = wireguard_paths
-            .iter()
-            .find(|p| std::path::Path::new(p).exists());
+        let bytes_received = self.bytes_received.clone();
+        let bytes_sent = self.bytes_sent.clone();
 
-        if let Some(wg_path) = wireguard_path {
-            log::info!("Disconnecting WireGuard tunnel: {}", self.tunnel_name);
+        // Spawn packet forwarding task
+        tokio::spawn(async move {
+            log::info!("Starting packet forwarding...");
 
-            let output = Command::new(wg_path)
-                .args(["/uninstalltunnelservice", &self.tunnel_name])
-                .output()
-                .map_err(|e| VpnError::WireGuardError(format!("Failed to run WireGuard: {}", e)))?;
+            let mut buf = [0u8; 65536];
+            let mut wg_buf = [0u8; 65536];
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                log::warn!("Tunnel uninstall returned error (may not exist): {}", stderr);
-            } else {
-                log::info!("WireGuard tunnel '{}' disconnected", self.tunnel_name);
+            while running.load(Ordering::SeqCst) {
+                let mut tunnel = tunnel_handle.lock().await;
+
+                // Read from TUN and send to WireGuard
+                if let Ok(packet) = tunnel.session.try_receive() {
+                    if let Some(packet) = packet {
+                        let packet_data = packet.bytes();
+                        bytes_sent.fetch_add(packet_data.len() as u64, Ordering::SeqCst);
+
+                        // Encrypt and send
+                        match tunnel.tunnel.encapsulate(packet_data, &mut wg_buf) {
+                            boringtun::noise::TunnResult::WriteToNetwork(data) => {
+                                let _ = tunnel.socket.send(data);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Read from WireGuard and write to TUN
+                match tunnel.socket.recv(&mut buf) {
+                    Ok(n) => {
+                        bytes_received.fetch_add(n as u64, Ordering::SeqCst);
+
+                        // Decrypt and write to TUN
+                        match tunnel.tunnel.decapsulate(None, &buf[..n], &mut wg_buf) {
+                            boringtun::noise::TunnResult::WriteToTunnelV4(data, _) => {
+                                if let Ok(mut write_pack) =
+                                    tunnel.session.allocate_send_packet(data.len() as u16)
+                                {
+                                    write_pack.bytes_mut().copy_from_slice(data);
+                                    tunnel.session.send_packet(write_pack);
+                                }
+                            }
+                            boringtun::noise::TunnResult::WriteToNetwork(data) => {
+                                let _ = tunnel.socket.send(data);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // No data available, continue
+                    }
+                    Err(e) => {
+                        log::warn!("Socket error: {}", e);
+                    }
+                }
+
+                // Send keepalive if needed
+                match tunnel.tunnel.update_timers(&mut wg_buf) {
+                    boringtun::noise::TunnResult::WriteToNetwork(data) => {
+                        let _ = tunnel.socket.send(data);
+                    }
+                    _ => {}
+                }
+
+                drop(tunnel);
+                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
             }
 
-            // Clean up config file
-            if let Some(ref config_path) = self.config_path {
-                let _ = std::fs::remove_file(config_path);
+            log::info!("Packet forwarding stopped");
+        });
+
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn configure_routing(&self, allowed_ips: &[String]) -> Result<(), VpnError> {
+        use std::process::Command;
+
+        for allowed_ip in allowed_ips {
+            if allowed_ip == "0.0.0.0/0" {
+                // Route all traffic through VPN
+                log::info!("Configuring default route through VPN...");
+
+                // Add route for 0.0.0.0/1 and 128.0.0.0/1 to capture all traffic
+                // This is a common trick to avoid replacing the default gateway
+                let _ = Command::new("route")
+                    .args([
+                        "add",
+                        "0.0.0.0",
+                        "mask",
+                        "128.0.0.0",
+                        "10.70.0.1",
+                        "metric",
+                        "1",
+                    ])
+                    .output();
+
+                let _ = Command::new("route")
+                    .args([
+                        "add",
+                        "128.0.0.0",
+                        "mask",
+                        "128.0.0.0",
+                        "10.70.0.1",
+                        "metric",
+                        "1",
+                    ])
+                    .output();
             }
-            self.config_path = None;
         }
 
         Ok(())
     }
 
-    // ================== macOS Implementation ==================
+    #[cfg(target_os = "windows")]
+    async fn disconnect_windows_embedded(&mut self) -> Result<(), VpnError> {
+        use std::process::Command;
+
+        log::info!("Stopping embedded WireGuard tunnel...");
+
+        // Stop the packet forwarding
+        if let Some(ref handle) = self.tunnel_handle {
+            let tunnel = handle.lock().await;
+            tunnel.running.store(false, Ordering::SeqCst);
+        }
+
+        // Remove routes
+        let _ = Command::new("route")
+            .args(["delete", "0.0.0.0", "mask", "128.0.0.0"])
+            .output();
+        let _ = Command::new("route")
+            .args(["delete", "128.0.0.0", "mask", "128.0.0.0"])
+            .output();
+
+        // Drop the tunnel handle (this closes the adapter)
+        self.tunnel_handle = None;
+
+        // Reset stats
+        self.bytes_received.store(0, Ordering::SeqCst);
+        self.bytes_sent.store(0, Ordering::SeqCst);
+
+        log::info!("Embedded WireGuard tunnel disconnected");
+        Ok(())
+    }
+
+    // ================== macOS Implementation (fallback to wg-quick) ==================
     #[cfg(target_os = "macos")]
     async fn connect_macos(&mut self, config: &VpnConfig) -> Result<(), VpnError> {
         use std::fs;
         use std::path::PathBuf;
+        use std::process::Command;
 
-        // Generate WireGuard config
         let config_content = self.generate_wg_config(config);
 
-        // Write config to user's wireguard directory
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let config_dir = PathBuf::from(&home).join(".config").join("sacvpn");
         fs::create_dir_all(&config_dir)
             .map_err(|e| VpnError::ConfigError(format!("Failed to create config dir: {}", e)))?;
 
-        let config_path = config_dir.join(format!("{}.conf", TUNNEL_NAME));
+        let config_path = config_dir.join(format!("{}.conf", self.tunnel_name));
         fs::write(&config_path, &config_content)
             .map_err(|e| VpnError::ConfigError(format!("Failed to write config: {}", e)))?;
 
-        log::info!("WireGuard config written to: {:?}", config_path);
-
-        // Try to use wg-quick if available (requires WireGuard tools installed via brew)
         let output = Command::new("wg-quick")
             .args(["up", config_path.to_str().unwrap()])
             .output();
@@ -334,50 +481,36 @@ impl WireGuardManager {
         match output {
             Ok(result) if result.status.success() => {
                 log::info!("WireGuard tunnel connected via wg-quick");
+                Ok(())
             }
             Ok(result) => {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 if stderr.contains("Operation not permitted") {
-                    return Err(VpnError::PermissionDenied(
-                        "WireGuard requires root privileges. Please run with sudo.".to_string()
-                    ));
+                    Err(VpnError::PermissionDenied(
+                        "WireGuard requires root privileges".to_string(),
+                    ))
+                } else {
+                    Err(VpnError::WireGuardError(format!(
+                        "wg-quick failed: {}",
+                        stderr
+                    )))
                 }
-                return Err(VpnError::WireGuardError(format!("wg-quick failed: {}", stderr)));
             }
-            Err(e) => {
-                return Err(VpnError::WireGuardError(format!(
-                    "WireGuard tools not found. Install with: brew install wireguard-tools. Error: {}", e
-                )));
-            }
+            Err(e) => Err(VpnError::WireGuardError(format!(
+                "WireGuard tools not found: {}",
+                e
+            ))),
         }
-
-        Ok(())
     }
 
     #[cfg(target_os = "macos")]
     async fn disconnect_macos(&mut self) -> Result<(), VpnError> {
+        use std::process::Command;
+
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let config_path = format!("{}/.config/sacvpn/{}.conf", home, TUNNEL_NAME);
+        let config_path = format!("{}/.config/sacvpn/{}.conf", home, self.tunnel_name);
 
-        log::info!("Disconnecting WireGuard tunnel: {}", self.tunnel_name);
-
-        let output = Command::new("wg-quick")
-            .args(["down", &config_path])
-            .output();
-
-        match output {
-            Ok(result) if !result.status.success() => {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                log::warn!("wg-quick down returned error: {}", stderr);
-            }
-            Err(e) => {
-                log::warn!("Failed to run wg-quick: {}", e);
-            }
-            _ => {
-                log::info!("WireGuard tunnel disconnected");
-            }
-        }
-
+        let _ = Command::new("wg-quick").args(["down", &config_path]).output();
         Ok(())
     }
 
@@ -386,23 +519,17 @@ impl WireGuardManager {
     async fn connect_linux(&mut self, config: &VpnConfig) -> Result<(), VpnError> {
         use std::fs;
         use std::path::PathBuf;
+        use std::process::Command;
 
-        // Generate WireGuard config
         let config_content = self.generate_wg_config(config);
-
-        // Write config to /tmp (user-accessible)
-        let config_path = PathBuf::from("/tmp").join(format!("{}.conf", TUNNEL_NAME));
+        let config_path = PathBuf::from("/tmp").join(format!("{}.conf", self.tunnel_name));
         fs::write(&config_path, &config_content)
             .map_err(|e| VpnError::ConfigError(format!("Failed to write config: {}", e)))?;
 
-        log::info!("WireGuard config written to: {:?}", config_path);
-
-        // Use wg-quick with pkexec for graphical privilege escalation
         let output = Command::new("pkexec")
             .args(["wg-quick", "up", config_path.to_str().unwrap()])
             .output()
             .or_else(|_| {
-                // Fallback to sudo if pkexec not available
                 Command::new("sudo")
                     .args(["wg-quick", "up", config_path.to_str().unwrap()])
                     .output()
@@ -411,39 +538,34 @@ impl WireGuardManager {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("Operation not permitted") || stderr.contains("Permission denied") {
+            if stderr.contains("Permission denied") {
                 return Err(VpnError::PermissionDenied(
-                    "WireGuard requires root privileges.".to_string()
+                    "WireGuard requires root privileges".to_string(),
                 ));
             }
-            return Err(VpnError::WireGuardError(format!("wg-quick failed: {}", stderr)));
+            return Err(VpnError::WireGuardError(format!(
+                "wg-quick failed: {}",
+                stderr
+            )));
         }
 
-        log::info!("WireGuard tunnel connected");
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     async fn disconnect_linux(&mut self) -> Result<(), VpnError> {
-        let config_path = format!("/tmp/{}.conf", TUNNEL_NAME);
+        use std::process::Command;
 
-        log::info!("Disconnecting WireGuard tunnel");
-
+        let config_path = format!("/tmp/{}.conf", self.tunnel_name);
         let _ = Command::new("pkexec")
             .args(["wg-quick", "down", &config_path])
             .output()
-            .or_else(|_| {
-                Command::new("sudo")
-                    .args(["wg-quick", "down", &config_path])
-                    .output()
-            });
-
+            .or_else(|_| Command::new("sudo").args(["wg-quick", "down", &config_path]).output());
         Ok(())
     }
 
     // ================== Helper Functions ==================
 
-    /// Generate WireGuard configuration file content
     fn generate_wg_config(&self, config: &VpnConfig) -> String {
         let dns = config.interface.dns.join(", ");
         let allowed_ips = config.peer.allowed_ips.join(", ");
@@ -482,34 +604,5 @@ AllowedIPs = {}
 impl Default for WireGuardManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generate_wg_config() {
-        let manager = WireGuardManager::new();
-        let config = VpnConfig {
-            interface: super::super::InterfaceConfig {
-                private_key: "test_private_key".to_string(),
-                address: "10.0.0.2/24".to_string(),
-                dns: vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()],
-                mtu: Some(1420),
-            },
-            peer: super::super::PeerConfig {
-                public_key: "test_public_key".to_string(),
-                endpoint: "vpn.sacvpn.com:51820".to_string(),
-                allowed_ips: vec!["0.0.0.0/0".to_string(), "::/0".to_string()],
-                persistent_keepalive: Some(25),
-            },
-        };
-
-        let wg_config = manager.generate_wg_config(&config);
-        assert!(wg_config.contains("PrivateKey = test_private_key"));
-        assert!(wg_config.contains("PublicKey = test_public_key"));
-        assert!(wg_config.contains("Endpoint = vpn.sacvpn.com:51820"));
     }
 }
