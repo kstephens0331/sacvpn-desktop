@@ -7,6 +7,7 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
+  FileText,
 } from "lucide-react";
 
 import TitleBar from "./components/TitleBar";
@@ -14,12 +15,13 @@ import ConnectionPanel from "./components/ConnectionPanel";
 import ServerList from "./components/ServerList";
 import SettingsPanel from "./components/SettingsPanel";
 import AccountPanel from "./components/AccountPanel";
+import ManualConfig from "./components/ManualConfig";
 import StatusBar from "./components/StatusBar";
 import UpdateNotification from "./components/UpdateNotification";
 import { useVPNStore } from "./stores/vpnStore";
 import { useAuthStore } from "./stores/authStore";
 
-type Tab = "connect" | "servers" | "settings" | "account";
+type Tab = "connect" | "servers" | "manual" | "settings" | "account";
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("connect");
@@ -97,6 +99,13 @@ function App() {
               onClick={() => setActiveTab("servers")}
             />
             <NavItem
+              icon={FileText}
+              label="Manual Config"
+              active={activeTab === "manual"}
+              collapsed={sidebarCollapsed}
+              onClick={() => setActiveTab("manual")}
+            />
+            <NavItem
               icon={Settings}
               label="Settings"
               active={activeTab === "settings"}
@@ -140,6 +149,7 @@ function App() {
               {activeTab === "servers" && (
                 <ServerList onServerSelect={() => setActiveTab("connect")} />
               )}
+              {activeTab === "manual" && <ManualConfig />}
               {activeTab === "settings" && <SettingsPanel />}
               {activeTab === "account" && <AccountPanel />}
             </motion.div>

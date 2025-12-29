@@ -1,13 +1,13 @@
 /**
  * SACVPN API Service
- * Handles communication with the Railway backend for VPN operations
+ * Handles communication with Supabase Edge Functions for VPN operations
  */
 
 import { supabase } from "../lib/supabase";
 import { invoke } from "@tauri-apps/api/core";
 
-// Environment configuration
-export const API_URL = import.meta.env.VITE_API_URL || "https://scvpn-production.up.railway.app";
+// Supabase configuration
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://ltwuqjmncldopkutiyak.supabase.co";
 
 // =============================================================================
 // WireGuard Configuration
@@ -24,10 +24,17 @@ export interface WireGuardConfigResponse {
 }
 
 /**
- * Generate WireGuard keys for a device
+ * Register device and generate WireGuard keys
+ * This calls the Supabase Edge Function which handles device registration,
+ * key generation, and config creation all in one operation
  */
-export async function generateWireGuardKey(deviceId: string): Promise<{
+export async function generateWireGuardKey(
+  deviceId: string,
+  deviceName?: string,
+  deviceType?: "windows" | "macos" | "linux"
+): Promise<{
   success: boolean;
+  config?: WireGuardConfigResponse;
   error?: string;
 }> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -37,7 +44,67 @@ export async function generateWireGuardKey(deviceId: string): Promise<{
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/wireguard/generate-key`, {
+    // Use provided device info or fall back to defaults
+    const name = deviceName || generateDeviceName();
+    const platform = deviceType || getDeviceType();
+
+    // Call Supabase Edge Function to register device and generate keys
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/vpn-register-device`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        device_name: name,
+        device_type: platform,
+        hardware_id: deviceId,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      return { success: false, error: errorData.error || "Failed to generate keys" };
+    }
+
+    const data = await response.json();
+
+    // Transform response to match WireGuardConfigResponse
+    const config: WireGuardConfigResponse = {
+      configText: data.config,
+      deviceName: name,
+      nodeName: data.server?.name || "Unknown",
+      nodeRegion: data.server?.region || "Unknown",
+      clientIp: data.config?.match(/Address = ([\d.]+)/)?.[1] || "",
+      platform: platform,
+    };
+
+    return { success: true, config };
+  } catch (error) {
+    console.error("Error in generateWireGuardKey:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Network error",
+    };
+  }
+}
+
+/**
+ * Get WireGuard configuration for a device from Supabase Edge Function
+ */
+export async function getWireGuardConfig(deviceId: string): Promise<{
+  success: boolean;
+  config?: WireGuardConfigResponse;
+  error?: string;
+}> {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session) {
+    return { success: false, error: "Not authenticated" };
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/vpn-get-config`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -47,38 +114,25 @@ export async function generateWireGuardKey(deviceId: string): Promise<{
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      return { success: false, error: error || "Failed to generate key" };
-    }
-
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Network error",
-    };
-  }
-}
-
-/**
- * Get WireGuard configuration for a device
- */
-export async function getWireGuardConfig(deviceId: string): Promise<{
-  success: boolean;
-  config?: WireGuardConfigResponse;
-  error?: string;
-}> {
-  try {
-    const response = await fetch(`${API_URL}/api/device/${deviceId}/config-data`);
-
-    if (!response.ok) {
-      const error = await response.text();
-      return { success: false, error: error || "Failed to get config" };
+      const errorData = await response.json();
+      return { success: false, error: errorData.error || "Failed to get config" };
     }
 
     const data = await response.json();
-    return { success: true, config: data };
+
+    // Transform response to match WireGuardConfigResponse
+    const config: WireGuardConfigResponse = {
+      configText: data.config,
+      deviceName: data.device?.name || "Unknown",
+      nodeName: data.server?.name || "Unknown",
+      nodeRegion: `${data.server?.city || "Unknown"}, ${data.server?.country || "Unknown"}`,
+      clientIp: data.client_ip,
+      platform: data.device?.type || "unknown",
+    };
+
+    return { success: true, config };
   } catch (error) {
+    console.error("Error in getWireGuardConfig:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Network error",
@@ -88,6 +142,7 @@ export async function getWireGuardConfig(deviceId: string): Promise<{
 
 /**
  * Download raw WireGuard config file content
+ * This is a convenience wrapper around getWireGuardConfig
  */
 export async function downloadWireGuardConfig(deviceId: string): Promise<{
   success: boolean;
@@ -95,15 +150,11 @@ export async function downloadWireGuardConfig(deviceId: string): Promise<{
   error?: string;
 }> {
   try {
-    const response = await fetch(`${API_URL}/api/device/${deviceId}/config`);
-
-    if (!response.ok) {
-      const error = await response.text();
-      return { success: false, error: error || "Failed to download config" };
+    const result = await getWireGuardConfig(deviceId);
+    if (!result.success || !result.config) {
+      return { success: false, error: result.error || "Failed to download config" };
     }
-
-    const configText = await response.text();
-    return { success: true, configText };
+    return { success: true, configText: result.config.configText };
   } catch (error) {
     return {
       success: false,
@@ -167,21 +218,21 @@ export async function registerDevice(
   }
 
   try {
-    // Get MAC address for device identification
-    const macAddress = await getMacAddress();
+    // Get hardware fingerprint for device identification
+    const hardwareId = await getDeviceFingerprint();
 
-    // Check if device already exists for this user with this MAC
-    if (macAddress) {
-      const { data: existingDeviceByMac } = await supabase
+    // Check if device already exists for this user with this hardware_id
+    if (hardwareId) {
+      const { data: existingDeviceByHardwareId } = await supabase
         .from("devices")
         .select("id")
         .eq("user_id", session.user.id)
-        .eq("mac_address", macAddress)
+        .eq("hardware_id", hardwareId)
         .eq("is_active", true)
         .maybeSingle();
 
-      if (existingDeviceByMac) {
-        return { success: true, deviceId: existingDeviceByMac.id };
+      if (existingDeviceByHardwareId) {
+        return { success: true, deviceId: existingDeviceByHardwareId.id };
       }
     }
 
@@ -195,24 +246,24 @@ export async function registerDevice(
       .maybeSingle();
 
     if (existingDevice) {
-      // Update existing device with MAC address
-      if (macAddress) {
+      // Update existing device with hardware_id
+      if (hardwareId) {
         await supabase
           .from("devices")
-          .update({ mac_address: macAddress })
+          .update({ hardware_id: hardwareId })
           .eq("id", existingDevice.id);
       }
       return { success: true, deviceId: existingDevice.id };
     }
 
-    // Create new device with MAC address
+    // Create new device with hardware_id
     const { data: newDevice, error } = await supabase
       .from("devices")
       .insert({
         user_id: session.user.id,
         name,
         platform,
-        mac_address: macAddress,
+        hardware_id: hardwareId,
         is_active: true,
       })
       .select("id")

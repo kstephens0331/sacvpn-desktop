@@ -65,13 +65,5 @@
     }
   },
   "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/kstephens0331/sacvpn-desktop/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
-    }
   }
 }

@@ -119,9 +119,18 @@ export function parseWireGuardConfig(configText: string): VpnConfig {
 
 /**
  * Check if running in Tauri environment
+ * In Tauri 2.0, check for __TAURI_INTERNALS__ or window.__TAURI__
  */
 export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI__" in window;
+  if (typeof window === "undefined") return false;
+
+  // Tauri 2.0 uses __TAURI_INTERNALS__
+  if ("__TAURI_INTERNALS__" in window) return true;
+
+  // Fallback for Tauri 1.x
+  if ("__TAURI__" in window) return true;
+
+  return false;
 }
 
 /**

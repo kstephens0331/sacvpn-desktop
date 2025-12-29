@@ -313,7 +313,8 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Updater disabled - needs signing keys to be configured
+        // .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Setup system tray
             if let Err(e) = setup_tray(app) {

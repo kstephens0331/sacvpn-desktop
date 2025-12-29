@@ -189,7 +189,7 @@ export const useVPNStore = create<VPNState>()(
       },
 
       connect: async () => {
-        const { selectedServer, deviceId } = get();
+        const { selectedServer } = get();
         if (!selectedServer) {
           set({ connectionError: "No server selected" });
           return;
@@ -198,40 +198,33 @@ export const useVPNStore = create<VPNState>()(
         set({ status: "connecting", connectionError: null });
 
         try {
-          let currentDeviceId = deviceId;
+          const deviceName = api.generateDeviceName();
+          const platform = api.getDeviceType();
 
-          // Step 1: Register device if needed
-          if (!currentDeviceId) {
-            const deviceName = api.generateDeviceName();
-            const platform = api.getDeviceType();
-
-            const registerResult = await api.registerDevice(deviceName, platform);
-
-            if (!registerResult.success || !registerResult.deviceId) {
-              set({
-                status: "disconnected",
-                connectionError: registerResult.error || "Failed to register device",
-              });
-              return;
-            }
-
-            currentDeviceId = registerResult.deviceId;
-            set({ deviceId: currentDeviceId });
+          // Get hardware fingerprint for device identification
+          const hardwareId = await api.getDeviceFingerprint();
+          if (!hardwareId) {
+            set({
+              status: "disconnected",
+              connectionError: "Failed to get device fingerprint",
+            });
+            return;
           }
 
-          // Step 2: Generate WireGuard key if device doesn't have config
-          const keyResult = await api.generateWireGuardKey(currentDeviceId);
-          if (!keyResult.success) {
-            // Key might already exist, continue to get config
-          }
+          // Call Edge Function to register device and generate keys
+          // The Edge Function handles everything: device registration, key generation, config creation
+          let configResult = await api.generateWireGuardKey(hardwareId, deviceName, platform);
 
-          // Step 3: Get WireGuard config
-          const configResult = await api.getWireGuardConfig(currentDeviceId);
+          // If device already registered, get existing config instead
+          if (!configResult.success) {
+            console.log("Device might already be registered, fetching existing config...");
+            configResult = await api.getWireGuardConfig(hardwareId);
+          }
 
           if (!configResult.success || !configResult.config) {
             set({
               status: "disconnected",
-              connectionError: configResult.error || "Failed to get VPN configuration",
+              connectionError: configResult.error || "Failed to get VPN configuration. Please try again.",
             });
             return;
           }
@@ -240,6 +233,7 @@ export const useVPNStore = create<VPNState>()(
           set({
             wgConfig: configText,
             clientIp: configResult.config.clientIp,
+            deviceId: hardwareId,
           });
 
           // Parse config and connect via Tauri backend
@@ -268,7 +262,7 @@ export const useVPNStore = create<VPNState>()(
 
           // Report telemetry
           api.reportTelemetry({
-            device_id: currentDeviceId,
+            device_id: hardwareId,
             is_connected: true,
             client_version: api.getClientVersion(),
             os_version: api.getOSVersion(),
